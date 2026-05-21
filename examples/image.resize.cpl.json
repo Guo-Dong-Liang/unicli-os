@@ -1,0 +1,27 @@
+{
+  "name": "image.resize",
+  "version": "1.0.0",
+  "description": "Resize an image to specified dimensions",
+  "inputs": [
+    {"name": "input", "type": "FILE", "required": true, "description": "Input image file path"},
+    {"name": "width", "type": "INT", "required": false, "default": "800", "description": "Target width in pixels"},
+    {"name": "height", "type": "INT", "required": false, "description": "Target height (omit to maintain aspect ratio)"},
+    {"name": "format", "type": "ENUM", "required": false, "default": "jpeg", "description": "Output format", "enum_values": ["jpeg", "png", "webp", "gif"]},
+    {"name": "quality", "type": "INT", "required": false, "default": "85", "description": "JPEG/WebP quality (1-100)"}
+  ],
+  "outputs": [
+    {"name": "output", "type": "FILE", "description": "Resized image file"},
+    {"name": "dimensions", "type": "TEXT", "description": "Final dimensions string (WxH)"},
+    {"name": "preview", "type": "STREAM", "description": "Base64 thumbnail stream"}
+  ],
+  "resources": {"cpu_cores": 0.5, "memory_mb": 128, "disk_mb": 200},
+  "network": "none",
+  "image_ref": "ghcr.io/unicli/image.resize:1.0.0",
+  "entrypoint": "/bin/resize",
+  "workdir": "/workspace",
+  "metadata": {
+    "author": "UniCLI Team",
+    "license": "MIT",
+    "tags": ["image", "media", "utility"]
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spec.unicli.io/cpl-manifest.schema.json",
+  "title": "CPL Manifest",
+  "description": "Schema for UniCLI CPL (Command Protocol Language) manifest files",
+  "type": "object",
+  "required": ["name", "version", "description", "image_ref", "entrypoint"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9.]*$",
+      "description": "Command name in dot notation, e.g. 'image.resize'"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version"
+    },
+    "description": { "type": "string" },
+    "inputs": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Input" }
+    },
+    "outputs": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Output" }
+    },
+    "resources": { "$ref": "#/definitions/ResourceRequirement" },
+    "network": {
+      "type": "string",
+      "enum": ["none", "outbound", "full"],
+      "default": "none"
+    },
+    "image_ref": { "type": "string" },
+    "entrypoint": { "type": "string" },
+    "workdir": { "type": "string", "default": "/workspace" },
+    "env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "mounts": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Mount" }
+    },
+    "signature": { "$ref": "#/definitions/Signature" },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "author": { "type": "string" },
+        "license": { "type": "string" },
+        "homepage": { "type": "string", "format": "uri" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "Input": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["STRING", "INT", "FLOAT", "BOOL", "FILE", "ENUM", "STREAM"]
+        },
+        "required": { "type": "boolean", "default": false },
+        "description": { "type": "string" },
+        "default": { "type": "string" },
+        "enum_values": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Required when type=ENUM"
+        },
+        "schema": { "$ref": "#/definitions/ValueSchema" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "INT" } } },
+          "then": {
+            "properties": {
+              "default": { "type": "string", "pattern": "^-?\\d+$" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "ENUM" } } },
+          "then": { "required": ["enum_values"] }
+        }
+      ]
+    },
+    "Output": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["TEXT", "FILE", "STREAM", "STRUCT", "EVENT"]
+        },
+        "description": { "type": "string" },
+        "schema": { "$ref": "#/definitions/ValueSchema" }
+      }
+    },
+    "ResourceRequirement": {
+      "type": "object",
+      "properties": {
+        "cpu_cores": { "type": "number", "minimum": 0.1, "default": 0.5 },
+        "memory_mb": { "type": "integer", "minimum": 16, "default": 256 },
+        "disk_mb": { "type": "integer", "minimum": 0, "default": 100 },
+        "gpu_count": { "type": "integer", "minimum": 0, "default": 0 },
+        "gpu_type": { "type": "string" }
+      }
+    },
+    "Mount": {
+      "type": "object",
+      "required": ["container_path"],
+      "properties": {
+        "container_path": { "type": "string" },
+        "read_only": { "type": "boolean", "default": true },
+        "description": { "type": "string" }
+      }
+    },
+    "Signature": {
+      "type": "object",
+      "required": ["public_key", "signature", "algorithm"],
+      "properties": {
+        "public_key": { "type": "string" },
+        "signature": { "type": "string" },
+        "algorithm": { "type": "string", "default": "ed25519" }
+      }
+    },
+    "ValueSchema": {
+      "type": "object",
+      "properties": {
+        "json_schema": { "type": "string" }
+      }
+    }
+  }
+}

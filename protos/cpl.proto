@@ -1,0 +1,158 @@
+syntax = "proto3";
+
+package unicli.cpl.v1;
+
+option go_package = "github.com/admin/unicli-os/pkg/cpl/v1";
+
+// ============================================================
+// CPL — CLI Protocol Language
+// 定义 Unicli 操作系统的所有 CLI 命令规范
+// ============================================================
+
+// CommandSpec 描述一个 CLI 命令的完整规范
+message CommandSpec {
+  string name = 1;             // 命令名，如 "image.resize"
+  string version = 2;          // 语义化版本号 (SemVer)
+  string description = 3;      // 人类可读的描述
+
+  repeated Input inputs = 10;  // 输入参数定义
+  repeated Output outputs = 11;// 输出参数定义
+  ResourceRequirement resources = 12;  // 资源需求
+  NetworkPolicy network = 13;  // 网络策略
+
+  string image_ref = 20;       // OCI 容器镜像引用
+  string entrypoint = 21;      // 容器入口点（默认 Entrypoint）
+  string workdir = 22;         // 默认工作目录
+  map<string, string> env = 23; // 默认环境变量
+
+  repeated Mount mounts = 30;  // 卷挂载声明（只声明路径，具体路径由调度器绑定）
+  Signature signature = 40;    // 镜像签名
+  map<string, string> metadata = 50;  // 标签、作者、许可证等
+}
+
+// Input 定义单个输入参数
+message Input {
+  string name = 1;
+  InputType type = 2;          // 参数类型
+  bool required = 3;           // 是否必需
+  string description = 4;
+  string default = 5;          // 默认值（JSON 字符串）
+  ValueSchema schema = 10;     // 结构化值的 JSON Schema 约束
+}
+
+// Output 定义单个输出
+message Output {
+  string name = 1;
+  OutputType type = 2;         // 输出类型
+  string description = 3;
+  ValueSchema schema = 4;
+}
+
+// InputType 枚举
+enum InputType {
+  INPUT_TYPE_UNSPECIFIED = 0;
+  STRING = 1;   // 字符串
+  INT = 2;      // 整数
+  FLOAT = 3;    // 浮点数
+  BOOL = 4;     // 布尔
+  FILE = 5;     // 文件输入（调度器挂载）
+  ENUM = 6;     // 枚举值
+  STREAM = 7;   // 流式输入（管道模式）
+}
+
+// OutputType 枚举
+enum OutputType {
+  OUTPUT_TYPE_UNSPECIFIED = 0;
+  TEXT = 1;     // 文本输出（stdout）
+  FILE = 2;     // 文件输出
+  STREAM = 3;   // 流式输出
+  STRUCT = 4;   // 结构化数据（Protobuf 序列化）
+  EVENT = 5;    // 事件流（Server-Sent Events）
+}
+
+// NetworkPolicy 网络隔离策略
+enum NetworkPolicy {
+  NETWORK_POLICY_UNSPECIFIED = 0;
+  NONE = 1;       // 无网络（默认——隔离最严格）
+  OUTBOUND = 2;   // 仅出站（可以访问 API）
+  FULL = 3;       // 完全网络（双向）
+}
+
+// ResourceRequirement 资源需求定义
+message ResourceRequirement {
+  double cpu_cores = 1;        // CPU 核数（可用分数，如 0.5）
+  int32 memory_mb = 2;         // 内存（MB）
+  int32 disk_mb = 3;           // 临时磁盘空间（MB）
+  int32 gpu_count = 4;         // GPU 数量
+  string gpu_type = 5;         // GPU 类型，如 "nvidia-a10"
+}
+
+// Mount 声明卷挂载点
+message Mount {
+  string container_path = 1;   // 容器内路径
+  bool read_only = 2;          // 只读
+  string description = 3;      // 挂载用途描述
+}
+
+// Signature 镜像签名
+message Signature {
+  string public_key = 1;       // Ed25519 公钥（Base64）
+  string signature = 2;        // 签名值（Base64）
+  string algorithm = 3;        // 签名算法，如 "ed25519"
+}
+
+// ValueSchema Value 约束
+message ValueSchema {
+  string json_schema = 1;      // JSON Schema 片段（draft-07）
+}
+
+// ============================================================
+// 管道协议（Pipeline Protocol）
+// ============================================================
+
+// PipeMessage 是两个 CLI 之间通过管道传输的消息帧
+message PipeMessage {
+  oneof payload {
+    PipeData data = 1;
+    PipeSignal signal = 2;
+    PipeError error = 3;
+  }
+}
+
+message PipeData {
+  string output_name = 1;      // 输出名（对应 Output.name）
+  bytes content = 2;           // 数据载荷
+  bool last_chunk = 3;         // 是否为最后一个分块
+  string content_type = 4;     // MIME 类型，如 "image/jpeg"、"application/json"
+}
+
+message PipeSignal {
+  SignalType type = 1;
+  string message = 2;
+}
+
+enum SignalType {
+  SIGNAL_TYPE_UNSPECIFIED = 0;
+  PROGRESS = 1;    // 进度通知
+  STARTED = 2;     // 开始处理
+  COMPLETED = 3;   // 处理完成
+}
+
+message PipeError {
+  int32 code = 1;
+  string message = 2;
+  string details = 3;
+}
+
+// PipeSpec 定义管道阶段
+message PipeSpec {
+  repeated Stage stages = 1;       // 管道阶段列表
+  string description = 2;
+}
+
+message Stage {
+  string command_name = 1;         // 命令名
+  map<string, string> args = 2;    // 参数 key=value
+  string input_mapping = 3;        // 上游输出→本阶段输入映射，如 "output:input"
+  string output_mapping = 4;       // 本阶段输出→下一阶段输入
+}
