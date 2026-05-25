@@ -1,0 +1,41 @@
+# Binaries
+/unicli
+/unicli-validate
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build output
+/bin/
+/dist/
+/out/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Profiling output
+*.prof
+*.pprof
+*.trace
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+vendor/
+
+# Local working directories
+~/.unicli/
+
+# Cache
+*.cache

@@ -1,18 +1,19 @@
-# 🚀 UniCLI OS
+# UniCLI OS
 
-> **Unity CLI, Beyond Apps.**
->
-> 下一代操作系统 — 一切皆 CLI，按需生成，用完即焚。
+**Universal CLI Operating System** — 一个结构化描述、沙箱运行、管道编排 CLI 工具的开放协议和运行时。
 
-## 核心理念
+## 核心组件
 
-APP 即 CLI + 容器镜像。用户不再安装应用，而是：
-
-- **按需运行**：`unicli run image.resize --input photo.jpg --width 800`
-- **链式调用**：`unicli run "image.resize | image.grayscale" < input.jpg`
-- **用完即焚**：沙箱退出自动清理，不留痕迹
-- **安全隔离**：容器无网络、只读文件系统、非 root 用户
-- **可保存为镜像**：`unicli save my-tool:1.0`
+| 组件 | 目录 | 状态 |
+|------|------|------|
+| CPL 协议规范 | `docs/cpl-spec-v1.md` | ✅ v1.0.0 |
+| Protobuf 定义 | `protos/cpl.proto` | ✅ v1.0.0 |
+| JSON Schema | `schemas/cpl-manifest.schema.json` | ✅ v1.0.0 |
+| 沙箱运行器 | `pkg/runner/` | 🔧 待实现 |
+| CLI Registry | `pkg/registry/` | 🔧 待实现 |
+| CPL 解析器 | `pkg/cpl/` | 🔧 待实现 |
+| 终端 CLI | `cmd/unicli/` | 🔧 待实现 |
+| 验证工具 | `cmd/unicli-validate/` | 🔧 待实现 |
 
 ## 快速开始
 
@@ -20,64 +21,49 @@ APP 即 CLI + 容器镜像。用户不再安装应用，而是：
 # 构建
 make build
 
-# 注册一个 CLI 命令
-unicli registry install examples/image.resize.cpl.json
+# 运行一个 CLI
+unicli run image.resize --input photo.jpg --width 800
 
-# 运行
-unicli run hello.say --name "World"
+# 链式调用
+unicli run "image.resize --width 800 | image.grayscale" --input photo.jpg
 
-# 链式管道
-unicli run "hello.say --name World | hello.say --greeting Hi"
+# 注册一个 CLI
+unicli registry install ghcr.io/unixcli/image.resize:1.0.0
 
-# 查看已安装的命令
+# 查看已注册的 CLI
 unicli registry list
-
-# 查看命令详情
-unicli inspect hello.say
 ```
+
+## 技术栈
+
+- **运行时引擎：** Go
+- **沙箱：** Docker (Phase 1) → gVisor (Phase 2)
+- **协议格式：** Protobuf + JSON
+- **管道通信：** Protobuf over stdio (length-prefixed frames)
+- **镜像格式：** OCI-compatible container images
 
 ## 项目结构
 
 ```
 unicli-os/
-├── cmd/unicli/             # CLI 入口
-├── pkg/
-│   ├── cpl/                # CPL 协议解析
-│   ├── runner/             # 沙箱运行器（Docker）
-│   └── registry/           # 本地 CLI 注册表
-├── protos/
-│   └── cpl.proto           # CPL Protocol Buffers 定义
-├── schemas/
-│   └── cpl-manifest.schema.json  # Manifest JSON Schema
-├── examples/
-│   ├── image.resize.cpl.json  # 图片缩放 CLI 示例
-│   └── hello.say.cpl.json     # 测试 CLI 示例
-├── docs/
-│   └── cpl-spec-v1.md     # CPL 协议规范文档
-├── scripts/               # 构建和部署脚本
-├── Makefile               # 构建系统
-└── Dockerfile             # 基础运行时镜像
+├── cmd/                  # CLI 入口
+│   ├── unicli/           # 主 CLI
+│   └── unicli-validate/  # 验证工具
+├── pkg/                  # 核心库
+│   ├── runner/           # 沙箱运行器
+│   ├── registry/         # CLI 注册表
+│   ├── cpl/              # CPL 协议解析
+│   └── validator/        # 验证器
+├── protos/               # Protobuf 定义
+├── examples/             # 示例 manifests
+├── schemas/              # JSON Schema
+├── docs/                 # 文档
+├── benchmarks/           # 性能基准
+└── scripts/              # 构建脚本
 ```
 
-## 架构
+## 协议
 
-```
-┌──────────────┐     ┌──────────────────┐     ┌──────────────┐
-│ Thin Client  │────▶│  AI 编译器        │────▶│  CLI Registry│
-│ (终端/语音)   │     │ (NL→CPL Manifest)│     │ (.cpl.json)  │
-└──────────────┘     └──────────────────┘     └──────┬───────┘
-                                                      │
-┌──────────────┐     ┌──────────────────┐            │
-│ 用户数据保险库 │◀────│  调度器           │◀───────────┘
-│ (加密存储)    │     │ (Sandbox Runner)  │
-└──────────────┘     └────────┬─────────┘
-                               │
-                    ┌──────────▼──────────┐
-                    │  Docker 沙箱容器池    │
-                    │ (gVisor Phase 2)    │
-                    └─────────────────────┘
-```
+CPL (Command Pipeline Language) v1.0.0
 
-## License
-
-MIT
+详细规范见 [docs/cpl-spec-v1.md](docs/cpl-spec-v1.md)

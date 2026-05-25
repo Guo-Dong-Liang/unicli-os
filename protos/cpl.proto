@@ -1,158 +1,176 @@
 syntax = "proto3";
 
-package unicli.cpl.v1;
+package cpl.v1;
 
-option go_package = "github.com/admin/unicli-os/pkg/cpl/v1";
+option go_package = "github.com/unixcli/unicli-os/pkg/cpl/v1;cplv1";
 
 // ============================================================
-// CPL — CLI Protocol Language
-// 定义 Unicli 操作系统的所有 CLI 命令规范
+// CPL (Command Pipeline Language) Protocol Buffers
+// Version: 1.0.0
 // ============================================================
 
-// CommandSpec 描述一个 CLI 命令的完整规范
-message CommandSpec {
-  string name = 1;             // 命令名，如 "image.resize"
-  string version = 2;          // 语义化版本号 (SemVer)
-  string description = 3;      // 人类可读的描述
+// ------------------------------------------------------------------
+// Manifest — 描述一个 CLI 工具的完整元数据
+// 序列化为 JSON 存储为 .cpl.json 文件
+// ------------------------------------------------------------------
 
-  repeated Input inputs = 10;  // 输入参数定义
-  repeated Output outputs = 11;// 输出参数定义
-  ResourceRequirement resources = 12;  // 资源需求
-  NetworkPolicy network = 13;  // 网络策略
+message Manifest {
+  string cpl_version = 1;           // CPL 协议版本，如 "1.0.0"
+  string name = 2;                  // 命令名称，如 "image.resize"
+  string version = 3;               // CLI 版本，如 "1.0.0"
+  string description = 4;           // 人类可读的描述
+  string author = 5;                // 作者/维护者
 
-  string image_ref = 20;       // OCI 容器镜像引用
-  string entrypoint = 21;      // 容器入口点（默认 Entrypoint）
-  string workdir = 22;         // 默认工作目录
-  map<string, string> env = 23; // 默认环境变量
+  repeated Input inputs = 10;       // 输入声明
+  repeated Output outputs = 11;     // 输出声明
+  ResourceRequirements resources = 12; // 资源需求
 
-  repeated Mount mounts = 30;  // 卷挂载声明（只声明路径，具体路径由调度器绑定）
-  Signature signature = 40;    // 镜像签名
-  map<string, string> metadata = 50;  // 标签、作者、许可证等
+  ImageSpec image = 20;             // 容器镜像规格
+  Signature signature = 21;         // 镜像签名（可选）
 }
 
-// Input 定义单个输入参数
+// ------------------------------------------------------------------
+// Input — CLI 的一个输入参数
+// ------------------------------------------------------------------
+
 message Input {
-  string name = 1;
-  InputType type = 2;          // 参数类型
-  bool required = 3;           // 是否必需
-  string description = 4;
-  string default = 5;          // 默认值（JSON 字符串）
-  ValueSchema schema = 10;     // 结构化值的 JSON Schema 约束
+  string name = 1;                  // 参数名，如 "width"
+  InputType type = 2;              // 数据类型
+  bool required = 3;                // 是否必需
+  oneof default_value {             // 默认值（可选）
+    string default_string = 4;
+    int64 default_int = 5;
+    double default_float = 6;
+    bool default_bool = 7;
+  }
+  string description = 8;           // 人类可读的描述
+  string flag = 9;                  // CLI flag，如 "--width"（空则用 name 推断）
+  int32 position = 10;              // 位置参数序号（0 = 命名参数，>0 = 位置参数）
+  repeated string enum_values = 11; // 当 type=ENUM 时的允许值列表
+  string mime_type = 12;            // 当 type=FILE 时可选的 MIME 类型约束
 }
 
-// Output 定义单个输出
-message Output {
-  string name = 1;
-  OutputType type = 2;         // 输出类型
-  string description = 3;
-  ValueSchema schema = 4;
-}
-
-// InputType 枚举
 enum InputType {
   INPUT_TYPE_UNSPECIFIED = 0;
-  STRING = 1;   // 字符串
-  INT = 2;      // 整数
-  FLOAT = 3;    // 浮点数
-  BOOL = 4;     // 布尔
-  FILE = 5;     // 文件输入（调度器挂载）
-  ENUM = 6;     // 枚举值
-  STREAM = 7;   // 流式输入（管道模式）
+  INPUT_TYPE_FILE = 1;              // 文件路径
+  INPUT_TYPE_STRING = 2;            // 字符串
+  INPUT_TYPE_INT = 3;               // 整数
+  INPUT_TYPE_FLOAT = 4;             // 浮点数
+  INPUT_TYPE_BOOLEAN = 5;           // 布尔值
+  INPUT_TYPE_ENUM = 6;              // 枚举
+  INPUT_TYPE_STREAM = 7;            // 流式数据（stdin）
 }
 
-// OutputType 枚举
+// ------------------------------------------------------------------
+// Output — CLI 的一个输出产物
+// ------------------------------------------------------------------
+
+message Output {
+  string name = 1;                  // 输出名，如 "output"
+  OutputType type = 2;             // 输出类型
+  string description = 3;           // 人类可读的描述
+  string mime_type = 4;             // MIME 类型（可选）
+  bool capture_stdout = 5;          // 是否从 stdout 捕获（而非文件）
+}
+
 enum OutputType {
   OUTPUT_TYPE_UNSPECIFIED = 0;
-  TEXT = 1;     // 文本输出（stdout）
-  FILE = 2;     // 文件输出
-  STREAM = 3;   // 流式输出
-  STRUCT = 4;   // 结构化数据（Protobuf 序列化）
-  EVENT = 5;    // 事件流（Server-Sent Events）
+  OUTPUT_TYPE_FILE = 1;             // 文件路径
+  OUTPUT_TYPE_TEXT = 2;             // 文本输出
+  OUTPUT_TYPE_STREAM = 3;           // 流式输出（逐块）
+  OUTPUT_TYPE_STRUCT = 4;           // 结构化数据（JSON/protobuf）
 }
 
-// NetworkPolicy 网络隔离策略
-enum NetworkPolicy {
-  NETWORK_POLICY_UNSPECIFIED = 0;
-  NONE = 1;       // 无网络（默认——隔离最严格）
-  OUTBOUND = 2;   // 仅出站（可以访问 API）
-  FULL = 3;       // 完全网络（双向）
+// ------------------------------------------------------------------
+// ResourceRequirements — 资源需求声明
+// ------------------------------------------------------------------
+
+message ResourceRequirements {
+  double cpu = 1;                   // CPU 核心数，默认 1.0
+  int32 memory_mb = 2;              // 内存限制 MB，默认 128
+  bool network = 3;                 // 是否需要网络，默认 false
+  bool gpu = 4;                     // 是否需要 GPU，默认 false
+  int32 timeout_seconds = 5;        // 超时秒数，默认 30
+  int32 disk_mb = 6;                // 临时磁盘空间 MB，默认 256
 }
 
-// ResourceRequirement 资源需求定义
-message ResourceRequirement {
-  double cpu_cores = 1;        // CPU 核数（可用分数，如 0.5）
-  int32 memory_mb = 2;         // 内存（MB）
-  int32 disk_mb = 3;           // 临时磁盘空间（MB）
-  int32 gpu_count = 4;         // GPU 数量
-  string gpu_type = 5;         // GPU 类型，如 "nvidia-a10"
+// ------------------------------------------------------------------
+// ImageSpec — 容器镜像规格
+// ------------------------------------------------------------------
+
+message ImageSpec {
+  string ref = 1;                   // 镜像引用，如 "ghcr.io/unixcli/image.resize:1.0.0"
+  string entrypoint = 2;            // 容器入口点，如 "/app/resize.sh"
+  string workdir = 3;               // 工作目录，如 "/workspace"
+  string user = 4;                  // 运行用户，默认 "nobody:nogroup"
+  map<string, string> env = 5;      // 环境变量
+  repeated Mount mounts = 6;         // 额外的挂载点（可选）
 }
 
-// Mount 声明卷挂载点
 message Mount {
-  string container_path = 1;   // 容器内路径
-  bool read_only = 2;          // 只读
-  string description = 3;      // 挂载用途描述
+  string source = 1;                // 宿主机路径（仅允许临时目录）
+  string target = 2;                // 容器内路径
+  bool read_only = 3;               // 是否只读，默认 false
 }
 
-// Signature 镜像签名
+// ------------------------------------------------------------------
+// Signature — 镜像签名
+// ------------------------------------------------------------------
+
 message Signature {
-  string public_key = 1;       // Ed25519 公钥（Base64）
-  string signature = 2;        // 签名值（Base64）
-  string algorithm = 3;        // 签名算法，如 "ed25519"
+  string algorithm = 1;             // 签名算法，如 "SHA256", "GPG"
+  string digest = 2;                // 摘要值
+  string public_key = 3;            // GPG 公钥（可选）
 }
 
-// ValueSchema Value 约束
-message ValueSchema {
-  string json_schema = 1;      // JSON Schema 片段（draft-07）
+// ------------------------------------------------------------------
+// StructuredMessage — 管道中传输的消息帧
+// 格式：varint-length-prefixed protobuf 消息，写入 stdout / 读自 stdin
+// ------------------------------------------------------------------
+
+message StructuredMessage {
+  MessageType type = 1;             // 消息类型
+  string output_name = 2;           // 对应 Output.name
+  bytes payload = 3;                // 实际数据
+  string mime_type = 4;             // MIME 类型指示
+  uint64 sequence = 5;              // 序列号（从 1 开始，用于有序重组）
+  map<string, string> metadata = 6; // 附加元数据
 }
 
-// ============================================================
-// 管道协议（Pipeline Protocol）
-// ============================================================
-
-// PipeMessage 是两个 CLI 之间通过管道传输的消息帧
-message PipeMessage {
-  oneof payload {
-    PipeData data = 1;
-    PipeSignal signal = 2;
-    PipeError error = 3;
-  }
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  MESSAGE_TYPE_DATA = 1;            // 数据块
+  MESSAGE_TYPE_ERROR = 2;           // 错误信息
+  MESSAGE_TYPE_METADATA = 3;        // 元数据（文件大小、校验和等）
+  MESSAGE_TYPE_EOS = 4;             // 流结束信号
 }
 
-message PipeData {
-  string output_name = 1;      // 输出名（对应 Output.name）
-  bytes content = 2;           // 数据载荷
-  bool last_chunk = 3;         // 是否为最后一个分块
-  string content_type = 4;     // MIME 类型，如 "image/jpeg"、"application/json"
+// ------------------------------------------------------------------
+// CommandResult — CLI 执行结果
+// ------------------------------------------------------------------
+
+message CommandResult {
+  int32 exit_code = 1;              // 退出码
+  string stdout_summary = 2;        // stdout 摘要（截断）
+  string stderr_summary = 3;        // stderr 摘要（截断）
+  map<string, string> outputs = 4;  // output_name → 实际路径/值
+  double duration_seconds = 5;      // 执行耗时
+  bool timed_out = 6;               // 是否超时
+  bool oom_killed = 7;              // 是否被 OOM killer 终止
+  int64 output_bytes = 8;           // 输出数据总大小
 }
 
-message PipeSignal {
-  SignalType type = 1;
-  string message = 2;
-}
+// ------------------------------------------------------------------
+// PipeSpec — 管道描述（用于链式调用的内部表示）
+// ------------------------------------------------------------------
 
-enum SignalType {
-  SIGNAL_TYPE_UNSPECIFIED = 0;
-  PROGRESS = 1;    // 进度通知
-  STARTED = 2;     // 开始处理
-  COMPLETED = 3;   // 处理完成
-}
-
-message PipeError {
-  int32 code = 1;
-  string message = 2;
-  string details = 3;
-}
-
-// PipeSpec 定义管道阶段
 message PipeSpec {
-  repeated Stage stages = 1;       // 管道阶段列表
-  string description = 2;
+  repeated Stage stages = 1;        // 按顺序执行的阶段
 }
 
 message Stage {
-  string command_name = 1;         // 命令名
-  map<string, string> args = 2;    // 参数 key=value
-  string input_mapping = 3;        // 上游输出→本阶段输入映射，如 "output:input"
-  string output_mapping = 4;       // 本阶段输出→下一阶段输入
+  string command_name = 1;          // CLI 命令名
+  string version = 2;               // 版本约束（可选）
+  map<string, string> args = 3;     // 传递给该阶段的参数 {name: value}
+  map<string, string> input_mapping = 4; // 上游输出 → 本阶段输入的映射
 }

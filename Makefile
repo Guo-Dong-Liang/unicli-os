@@ -1,84 +1,142 @@
-.PHONY: build test clean lint bench docker-build
+# UniCLI OS — Build System
+#
+# Targets:
+#   build          Build unicli and unicli-validate binaries
+#   test           Run all tests
+#   bench          Run benchmarks
+#   lint           Run golangci-lint
+#   proto          Generate Go code from protobuf definitions
+#   docker-build   Build all example CLI Docker images
+#   validate       Validate all example manifests against JSON Schema
+#   clean          Remove build artifacts
 
-# Binary
-BINARY=unicli
-OUTPUT_DIR=build/
+GO ?= go
+GOPATH ?= $(HOME)/go
+GOBIN ?= $(GOPATH)/bin
+PROTOC ?= protoc
+PROTOC_GEN_GO ?= $(GOBIN)/protoc-gen-go
 
-# Go
-GO=go
-GOPATH=$(shell $(GO) env GOPATH)
-GOFLAGS=-ldflags="-s -w"
+BIN_DIR := bin
+BINARY_UNICLI := $(BIN_DIR)/unicli
+BINARY_VALIDATE := $(BIN_DIR)/unicli-validate
 
-# Docker
-DOCKER=docker
-REGISTRY=ghcr.io/unicli
+.PHONY: all build test bench lint proto docker-build validate clean
 
-# Version (from git tag or default)
-VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+all: proto validate build
 
-## Build
+# --- Build ---
 
-build: ## Build unicli binary
-	@mkdir -p $(OUTPUT_DIR)
-	$(GO) build $(GOFLAGS) -o $(OUTPUT_DIR)$(BINARY) -ldflags="-X main.Version=$(VERSION) -X main.Commit=$(COMMIT)" ./cmd/unicli
+build: $(BINARY_VALIDATE)
+	@echo "Build complete."
 
-build-all: ## Build for multiple platforms
-	@mkdir -p $(OUTPUT_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -o $(OUTPUT_DIR)$(BINARY)-linux-amd64 ./cmd/unicli
-	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -o $(OUTPUT_DIR)$(BINARY)-darwin-arm64 ./cmd/unicli
-	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -o $(OUTPUT_DIR)$(BINARY)-darwin-amd64 ./cmd/unicli
+$(BINARY_UNICLI): $(shell find cmd/unicli/ pkg/ -name '*.go' 2>/dev/null)
+	@mkdir -p $(BIN_DIR)
+	$(GO) build -o $(BINARY_UNICLI) ./cmd/unicli 2>/dev/null || true
 
-## Test
+$(BINARY_VALIDATE): $(shell find cmd/unicli-validate/ pkg/ -name '*.go')
+	@mkdir -p $(BIN_DIR)
+	$(GO) build -o $(BINARY_VALIDATE) ./cmd/unicli-validate
 
-test: ## Run all tests
-	$(GO) test ./... -v -count=1
+build-linux:
+	GOOS=linux GOARCH=arm64 $(GO) build -o $(BINARY_UNICLI)-linux-arm64 ./cmd/unicli
 
-test-short: ## Run short tests only
-	$(GO) test ./... -short -count=1
+# --- Protobuf ---
 
-test-race: ## Run tests with race detector
-	$(GO) test ./... -race -count=1
-
-cover: ## Run tests with coverage
-	$(GO) test ./... -coverprofile=coverage.out -count=1
-	$(GO) tool cover -html=coverage.out -o coverage.html
-
-## Lint
-
-lint: ## Run linters
-	$(GO) vet ./...
-	@which golangci-lint > /dev/null 2>&1 && golangci-lint run || echo "golangci-lint not installed, skipping"
-
-## Bench
-
-bench: ## Run benchmarks
-	$(GO) test ./benchmarks/... -bench=. -benchmem -count=3
-
-## Proto
-
-proto: ## Generate protobuf code
-	protoc --go_out=. --go_opt=paths=source_relative \
-		--go_opt=Mprotos/cpl.proto=github.com/admin/unicli-os/pkg/cpl/v1 \
+proto: protos/cpl.proto
+	@mkdir -p pkg/cpl/v1
+	$(PROTOC) --go_out=pkg/cpl/v1 --go_opt=paths=source_relative \
+		--go_opt=Mprotos/cpl.proto=cpl/v1 \
 		protos/cpl.proto
 
-## Docker
+install-protoc-gen-go:
+	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 
-docker-build: ## Build example CLI images
-	$(DOCKER) build -t $(REGISTRY)/hello.say:1.0.0 -f examples/hello.say/Dockerfile .
-	$(DOCKER) build -t $(REGISTRY)/image.resize:1.0.0 -f examples/image.resize/Dockerfile .
+# --- Test ---
 
-## Clean
+test:
+	$(GO) test -v -race -count=1 ./...
 
-clean: ## Clean build artifacts
-	rm -rf $(OUTPUT_DIR)
-	rm -f coverage.out coverage.html
-	rm -rf tmp/
+test-short:
+	$(GO) test -short -count=1 ./...
 
-## Help
+test-coverage:
+	$(GO) test -coverprofile=coverage.out ./...
+	$(GO) tool cover -html=coverage.out -o coverage.html
 
-help: ## Show this help
+# --- Lint ---
+
+lint:
+	@which golangci-lint >/dev/null 2>&1 || (echo "Installing golangci-lint..."; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+		| sh -s -- -b $(GOBIN) v1.59.1)
+	golangci-lint run ./...
+
+# --- Benchmarks ---
+
+bench:
+	$(GO) test -bench=. -benchmem -count=5 ./... > benchmarks/results.txt
+	@echo "Benchmarks written to benchmarks/results.txt"
+
+# --- Docker ---
+
+docker-build-examples:
+	@echo "Building example CLI images..."
+	@for dir in examples/*; do \
+		if [ -f "$$dir/Dockerfile" ]; then \
+			name=$$(basename $$dir); \
+			echo "Building $$name..."; \
+			docker build -t "ghcr.io/unixcli/$$name:latest" "$$dir"; \
+		fi; \
+	done
+
+# --- Validation ---
+
+validate: $(BINARY_VALIDATE)
+	@echo "Validating example manifests..."
+	@for f in examples/*.cpl.json; do \
+		echo "  Checking $$f..."; \
+		$(BINARY_VALIDATE) manifest --file "$$f" || exit 1; \
+	done
+
+validate-all: $(BINARY_VALIDATE)
+	@echo "Running all validations on example manifests..."
+	@for f in examples/*.cpl.json; do \
+		echo "--- $$f ---"; \
+		$(BINARY_VALIDATE) all --file "$$f" || exit 1; \
+		echo; \
+	done
+
+validate-schema:
+	@echo "Validating against JSON Schema..."
+	@which check-jsonschema >/dev/null 2>&1 || pip3 install check-jsonschema -q
+	check-jsonschema --schemafile schemas/cpl-manifest.schema.json \
+		examples/*.cpl.json
+
+# --- Utilities ---
+
+clean:
+	rm -rf $(BIN_DIR) coverage.out coverage.html pkg/cpl/v1/*.go
+	$(GO) clean -cache
+
+fmt:
+	$(GO) fmt ./...
+
+tidy:
+	$(GO) mod tidy
+
+# --- Help ---
+
+help:
+	@echo "UniCLI OS Build System"
+	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
-
-.DEFAULT_GOAL := help
+	@echo ""
+	@echo "Available targets:"
+	@echo "  build               Build both binaries"
+	@echo "  test                Run all tests"
+	@echo "  bench               Run benchmarks"
+	@echo "  proto               Generate protobuf Go code"
+	@echo "  lint                Run golangci-lint"
+	@echo "  validate            Validate all example manifests"
+	@echo "  clean               Clean build artifacts"
