@@ -128,6 +128,25 @@ func cmdRunLocal(args []string) {
 	toolName := args[0]
 	toolArgs := args[1:]
 
+	// Check for pipe mode
+	quiet := false
+	var filteredArgs []string
+	for i := 0; i < len(toolArgs); i++ {
+		if toolArgs[i] == "--quiet" || toolArgs[i] == "-q" {
+			quiet = true
+			continue
+		}
+		filteredArgs = append(filteredArgs, toolArgs[i])
+	}
+	toolArgs = filteredArgs
+
+	// Auto-detect pipe: if stdout is not a terminal AND stdin is piped
+	statOut, _ := os.Stdout.Stat()
+	statIn, _ := os.Stdin.Stat()
+	if (statOut.Mode()&os.ModeCharDevice) == 0 || (statIn.Mode()&os.ModeCharDevice) == 0 {
+		quiet = true
+	}
+
 	// Find manifest in registry
 	regDir := getRegistryDir()
 	manifestPath := filepath.Join(regDir, toolName, toolName+".cpl.json")
@@ -151,16 +170,11 @@ func cmdRunLocal(args []string) {
 	entrypoint := manifest.Image.Entrypoint
 
 	// Resolve entrypoint path relative to tool directory
-	if !filepath.IsAbs(entrypoint) {
+	if strings.HasPrefix(entrypoint, "/") {
+		// Container-style path: try basename first
+		entrypoint = filepath.Join(toolDir, filepath.Base(entrypoint))
+	} else if !filepath.IsAbs(entrypoint) {
 		entrypoint = filepath.Join(toolDir, entrypoint)
-	} else if strings.HasPrefix(entrypoint, "/") {
-		// Container-style path, try to find locally
-		rel := strings.TrimPrefix(entrypoint, "/")
-		entrypoint = filepath.Join(toolDir, rel)
-		// If not found, try just the basename
-		if _, err := os.Stat(entrypoint); os.IsNotExist(err) {
-			entrypoint = filepath.Join(toolDir, filepath.Base(entrypoint))
-		}
 	}
 
 	// Check entrypoint exists
@@ -196,8 +210,10 @@ func cmdRunLocal(args []string) {
 	cmd.Stderr = os.Stderr
 	cmd.Dir = toolDir
 
-	fmt.Fprintf(os.Stderr, "🔧 unicli run %s\n", toolName)
-	fmt.Fprintf(os.Stderr, "   Entrypoint: %s\n", entrypoint)
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "🔧 unicli run %s\n", toolName)
+		fmt.Fprintf(os.Stderr, "   Entrypoint: %s\n", entrypoint)
+	}
 
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
