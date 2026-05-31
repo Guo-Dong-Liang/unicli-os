@@ -70,6 +70,8 @@ func main() {
 	switch cmd {
 	case "run":
 		cmdRun(args)
+	case "init":
+		cmdInit(args)
 	case "registry":
 		cmdRegistry(args)
 	case "help", "--help", "-h":
@@ -87,6 +89,7 @@ func printUsage() {
 Usage:
   unicli run <tool-name> [flags...]       Run a tool from registry (local)
   unicli run --image <ref> [-- <cmd>...]  Run a Docker image
+  unicli init [tool-name]                 Scaffold a new tool (interactive)
   unicli registry list                    List installed tools
   unicli registry install <dir>           Install a tool from directory
   unicli registry inspect <name>          Inspect an installed tool
@@ -95,6 +98,8 @@ Usage:
 
 Examples:
   unicli run hello.say --name 果果
+  unicli init my-tool                      # Create a new tool
+  unicli registry install ./my-tool/       # Install it
   unicli run --image alpine:3.20 -- echo "Hello"
   unicli registry install ./examples/hello.say/`)
 }
@@ -463,4 +468,174 @@ func expandPath(path string) string {
 		return filepath.Join(home, path[2:])
 	}
 	return path
+}
+
+// --- Init (scaffolding) ---
+
+func cmdInit(args []string) {
+	toolName := ""
+	if len(args) > 0 {
+		toolName = args[0]
+	}
+
+	reader := func(prompt string) string {
+		fmt.Print(prompt)
+		var input string
+		fmt.Scanln(&input)
+		return input
+	}
+
+	// 1. Tool name
+	if toolName == "" {
+		toolName = reader("  Tool name: ")
+		for toolName == "" {
+			toolName = reader("  Tool name (required): ")
+		}
+	}
+
+	toolDir := toolName
+	fmt.Printf("\n📦 Creating tool: %s\n\n", toolName)
+
+	// 2. Description
+	desc := reader(fmt.Sprintf("  Description (%s): ", "示例工具"))
+	if desc == "" {
+		desc = "示例工具"
+	}
+
+	// 3. Entrypoint type
+	fmt.Println("\n  Entrypoint type:")
+	fmt.Println("    1) Python (.py)")
+	fmt.Println("    2) Shell (.sh)")
+	epChoice := reader("  Choice [1]: ")
+	if epChoice == "" {
+		epChoice = "1"
+	}
+
+	epFile := "run.sh"
+	template := ``
+	if epChoice == "1" {
+		epFile = "main.py"
+		template = `#!/usr/bin/env python3
+"""%s - %s"""
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser(description="%s")
+    parser.add_argument('--input', help='输入参数')
+    args = parser.parse_args()
+
+    result = f"Hello from %s! input={args.input}"
+    print(result)
+
+if __name__ == '__main__':
+    main()
+`
+	} else {
+		template = `#!/bin/bash
+# %s - %s
+# Usage: ./run.sh --input VALUE
+
+echo "Hello from %s! input=$1"
+`
+	}
+
+	// 4. Inputs
+	fmt.Println("\n  Define inputs (leave name empty to finish):")
+	var inputs []struct {
+		Name     string
+		Flag     string
+		Type     string
+		Required bool
+		Default  string
+	}
+
+	for i := 1; ; i++ {
+		inName := reader(fmt.Sprintf("  Input %d name: ", i))
+		if inName == "" {
+			break
+		}
+		inFlag := reader(fmt.Sprintf("    --flag [--%s]: ", inName))
+		if inFlag == "" {
+			inFlag = "--" + inName
+		}
+		inType := reader(fmt.Sprintf("    type [STRING]: "))
+		if inType == "" {
+			inType = "STRING"
+		}
+		inReq := reader(fmt.Sprintf("    required? [y/N]: "))
+		inputs = append(inputs, struct {
+			Name     string
+			Flag     string
+			Type     string
+			Required bool
+			Default  string
+		}{
+			Name: inName,
+			Flag: inFlag,
+			Type: inType,
+			Required: inReq == "y" || inReq == "Y",
+		})
+
+		fmt.Println()
+		if len(inputs) >= 8 {
+			break
+		}
+	}
+
+	// 5. Create directory
+	os.MkdirAll(toolDir, 0755)
+
+	// Write entrypoint
+	entryContent := fmt.Sprintf(template, toolName, desc, desc, toolName)
+	os.WriteFile(filepath.Join(toolDir, epFile), []byte(entryContent), 0755)
+
+	// Build manifest
+	manifest := CPLManifest{
+		CPLVersion:  "1.0.0",
+		Name:        toolName,
+		Version:     "1.0.0",
+		Description: desc,
+		Author:      "UniCLI User",
+		Inputs:      make([]CPLInput, 0),
+		Outputs: []CPLOutput{
+			{Name: "output", Type: "TEXT", Description: "工具输出", CaptureStdout: true},
+		},
+		Resources: CPLResource{CPU: 1, Memory: 256, Network: false, GPU: false, Timeout: 60, Disk: 128},
+		Image:     CPLImage{Ref: fmt.Sprintf("ghcr.io/unixcli/%s:1.0.0", toolName), Entrypoint: epFile, Workdir: "/workspace", User: "nobody:nogroup"},
+	}
+
+	for _, in := range inputs {
+		inp := CPLInput{
+			Name:        in.Name,
+			Type:        in.Type,
+			Required:    in.Required,
+			Flag:        in.Flag,
+			Description: fmt.Sprintf("%s 参数", in.Name),
+		}
+		if in.Default != "" {
+			inp.Default = in.Default
+		}
+		manifest.Inputs = append(manifest.Inputs, inp)
+	}
+
+	// If no inputs defined, add a sample one
+	if len(inputs) == 0 {
+		manifest.Inputs = append(manifest.Inputs, CPLInput{
+			Name: "input", Type: "STRING", Required: false,
+			Flag: "--input", Description: "输入参数",
+		})
+	}
+
+	// Write manifest
+	manData, _ := json.MarshalIndent(manifest, "", "  ")
+	os.WriteFile(filepath.Join(toolDir, toolName+".cpl.json"), manData, 0644)
+
+	// Summary
+	fmt.Printf("\n✅ Created tool: %s/\n", toolDir)
+	fmt.Printf("   ├── %s.cpl.json    (manifest)\n", toolName)
+	fmt.Printf("   └── %s          (entrypoint)\n\n", epFile)
+	fmt.Printf("  Next steps:\n")
+	fmt.Printf("    cd %s\n", toolDir)
+	fmt.Printf("    unicli registry install .\n")
+	fmt.Printf("    unicli run %s --input test\n\n", toolName)
 }
