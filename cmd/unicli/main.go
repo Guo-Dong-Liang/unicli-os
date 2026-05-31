@@ -1,12 +1,62 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// --- CPL Manifest types ---
+
+type CPLManifest struct {
+	CPLVersion  string      `json:"cpl_version"`
+	Name        string      `json:"name"`
+	Version     string      `json:"version"`
+	Description string      `json:"description"`
+	Author      string      `json:"author"`
+	Inputs      []CPLInput  `json:"inputs"`
+	Outputs     []CPLOutput `json:"outputs"`
+	Resources   CPLResource `json:"resources"`
+	Image       CPLImage    `json:"image"`
+}
+
+type CPLInput struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Required    bool        `json:"required"`
+	Default     interface{} `json:"default"`
+	Description string      `json:"description"`
+	Flag        string      `json:"flag"`
+	Position    int         `json:"position"`
+}
+
+type CPLOutput struct {
+	Name           string `json:"name"`
+	Type           string `json:"type"`
+	Description    string `json:"description"`
+	CaptureStdout  bool   `json:"capture_stdout"`
+}
+
+type CPLResource struct {
+	CPU     float64 `json:"cpu"`
+	Memory  int     `json:"memory"`
+	Network bool    `json:"network"`
+	GPU     bool    `json:"gpu"`
+	Timeout int     `json:"timeout"`
+	Disk    int     `json:"disk"`
+}
+
+type CPLImage struct {
+	Ref        string `json:"ref"`
+	Entrypoint string `json:"entrypoint"`
+	Workdir    string `json:"workdir"`
+	User       string `json:"user"`
+}
+
+// --- Main ---
 
 func main() {
 	if len(os.Args) < 2 {
@@ -35,26 +85,168 @@ func printUsage() {
 	fmt.Println(`UniCLI OS — Universal Containerized Language Interface
 
 Usage:
-  unicli run --image <ref> [-- <container-cmd>...]
-  unicli registry list
-  unicli registry install <dir>
-  unicli registry inspect <name>
-  unicli registry remove <name>
-  unicli help
+  unicli run <tool-name> [flags...]       Run a tool from registry (local)
+  unicli run --image <ref> [-- <cmd>...]  Run a Docker image
+  unicli registry list                    List installed tools
+  unicli registry install <dir>           Install a tool from directory
+  unicli registry inspect <name>          Inspect an installed tool
+  unicli registry remove <name>           Remove an installed tool
+  unicli help                             Show this help
 
 Examples:
-  unicli run --image hello.say:latest -- /app/say.sh "你好郭总"
-  unicli run --image alpine:3.20 -- echo "Hello from UniCLI OS"`)
+  unicli run hello.say --name 果果
+  unicli run --image alpine:3.20 -- echo "Hello"
+  unicli registry install ./examples/hello.say/`)
 }
 
+// --- Run ---
+
 func cmdRun(args []string) {
+	// If first arg is --image, use Docker mode (original behavior)
+	if len(args) > 0 && args[0] == "--image" {
+		cmdRunDocker(args)
+		return
+	}
+
+	// Otherwise, treat first arg as tool name -> local run mode
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Error: specify a tool name or --image")
+		os.Exit(1)
+	}
+
+	cmdRunLocal(args)
+}
+
+// --- Local Run Mode (Phase 1) ---
+
+func cmdRunLocal(args []string) {
+	toolName := args[0]
+	toolArgs := args[1:]
+
+	// Find manifest in registry
+	regDir := getRegistryDir()
+	manifestPath := filepath.Join(regDir, toolName, toolName+".cpl.json")
+
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: tool '%s' not found in registry.\n", toolName)
+		fmt.Fprintf(os.Stderr, "  Looked in: %s\n", manifestPath)
+		fmt.Fprintf(os.Stderr, "  Install it first: unicli registry install <path-to-tool-dir>\n")
+		os.Exit(1)
+	}
+
+	var manifest CPLManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid manifest: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Determine entrypoint path
+	toolDir := filepath.Join(regDir, toolName)
+	entrypoint := manifest.Image.Entrypoint
+	// If entrypoint is an absolute path (container path), make it relative to tool dir
+	if strings.HasPrefix(entrypoint, "/") {
+		// Try: <toolDir>/<basename>
+		baseName := filepath.Base(entrypoint)
+		localPath := filepath.Join(toolDir, baseName)
+		if _, err := os.Stat(localPath); err == nil {
+			entrypoint = localPath
+		} else {
+			// Try: <toolDir>/<entrypoint without leading />
+			rel := strings.TrimPrefix(entrypoint, "/")
+			entrypoint = filepath.Join(toolDir, rel)
+		}
+	}
+
+	// Check entrypoint exists
+	if _, err := os.Stat(entrypoint); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Error: entrypoint not found: %s\n", entrypoint)
+		os.Exit(1)
+	}
+
+	// Parse tool args against manifest inputs
+	cmdArgs := buildCommandArgs(manifest, toolArgs)
+
+	// Determine how to run: if it's a shell script, run with bash
+	var cmd *exec.Cmd
+	if strings.HasSuffix(entrypoint, ".sh") {
+		cmd = exec.Command("bash", append([]string{entrypoint}, cmdArgs...)...)
+	} else {
+		// Make executable and run directly
+		cmd = exec.Command(entrypoint, cmdArgs...)
+	}
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Dir = toolDir
+
+	fmt.Fprintf(os.Stderr, "🔧 unicli run %s\n", toolName)
+	fmt.Fprintf(os.Stderr, "   Entrypoint: %s\n", entrypoint)
+
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// buildCommandArgs maps CLI flags to manifest input definitions
+func buildCommandArgs(manifest CPLManifest, cliArgs []string) []string {
+	// Parse CLI args into a map
+	argMap := make(map[string]string)
+	var positional []string
+
+	for i := 0; i < len(cliArgs); i++ {
+		if strings.HasPrefix(cliArgs[i], "--") {
+			flag := cliArgs[i]
+			if i+1 < len(cliArgs) && !strings.HasPrefix(cliArgs[i+1], "--") {
+				argMap[flag] = cliArgs[i+1]
+				i++
+			} else {
+				argMap[flag] = "true"
+			}
+		} else {
+			positional = append(positional, cliArgs[i])
+		}
+	}
+
+	// Build command args based on manifest inputs
+	var cmdArgs []string
+	for _, input := range manifest.Inputs {
+		flag := input.Flag
+		if flag == "" {
+			continue
+		}
+
+		// Check if user provided this flag
+		if val, ok := argMap[flag]; ok {
+			cmdArgs = append(cmdArgs, flag, val)
+		} else if input.Required {
+			// Required input not provided — skip, let the tool handle validation
+			continue
+		}
+		// If not required and not provided, skip (use default)
+	}
+
+	// Append remaining unmatched args
+	for _, p := range positional {
+		cmdArgs = append(cmdArgs, p)
+	}
+
+	return cmdArgs
+}
+
+// --- Docker Run Mode (original) ---
+
+func cmdRunDocker(args []string) {
 	var imageRef string
 	var cmdArgs []string
-	passedDash := false
 
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
-			passedDash = true
 			cmdArgs = args[i+1:]
 			break
 		}
@@ -69,7 +261,6 @@ func cmdRun(args []string) {
 		os.Exit(1)
 	}
 
-	// Determine DOCKER_HOST
 	dockerHost := os.Getenv("DOCKER_HOST")
 	if dockerHost == "" {
 		home, _ := os.UserHomeDir()
@@ -79,14 +270,10 @@ func cmdRun(args []string) {
 		}
 	}
 
-	// Build docker run command: docker run [OPTIONS] IMAGE [CMD...]
 	dockerArgs := []string{"run", "--rm", "-i"}
 	dockerArgs = append(dockerArgs, imageRef)
 	if len(cmdArgs) > 0 {
 		dockerArgs = append(dockerArgs, cmdArgs...)
-	}
-	if passedDash && len(cmdArgs) == 0 {
-		// User passed -- but no args, just run default entrypoint
 	}
 
 	cmd := exec.Command("docker", dockerArgs...)
@@ -105,6 +292,8 @@ func cmdRun(args []string) {
 		os.Exit(1)
 	}
 }
+
+// --- Registry ---
 
 func getRegistryDir() string {
 	home, err := os.UserHomeDir()
@@ -129,25 +318,38 @@ func cmdRegistry(args []string) {
 		entries, err := os.ReadDir(regDir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Println("No skills installed in registry.")
+				fmt.Println("No tools installed in registry.")
 				return
 			}
 			fmt.Fprintf(os.Stderr, "Error reading registry: %v\n", err)
 			os.Exit(1)
 		}
-		var skills []string
+		var tools []string
 		for _, e := range entries {
 			if e.IsDir() {
-				skills = append(skills, e.Name())
+				tools = append(tools, e.Name())
 			}
 		}
-		if len(skills) == 0 {
-			fmt.Println("No skills installed in registry.")
+		if len(tools) == 0 {
+			fmt.Println("No tools installed in registry.")
 			return
 		}
-		fmt.Printf("Installed skills (%d):\n", len(skills))
-		for _, s := range skills {
-			fmt.Printf("  - %s\n", s)
+		fmt.Printf("Installed tools (%d):\n", len(tools))
+		for _, t := range tools {
+			// Read version from manifest
+			manifestPath := filepath.Join(regDir, t, t+".cpl.json")
+			desc := ""
+			if data, err := os.ReadFile(manifestPath); err == nil {
+				var m CPLManifest
+				if json.Unmarshal(data, &m) == nil {
+					desc = m.Description
+				}
+			}
+			fmt.Printf("  - %s", t)
+			if desc != "" {
+				fmt.Printf(": %s", desc)
+			}
+			fmt.Println()
 		}
 
 	case "install":
@@ -181,7 +383,8 @@ func cmdRegistry(args []string) {
 			os.Exit(1)
 		}
 
-		fmt.Printf("Installed '%s' from %s\n", name, srcDir)
+		fmt.Printf("✅ Installed '%s' from %s\n", name, srcDir)
+		fmt.Printf("   Run: unicli run %s\n", name)
 
 	case "inspect":
 		if len(subargs) < 1 {
@@ -189,57 +392,40 @@ func cmdRegistry(args []string) {
 			os.Exit(1)
 		}
 		name := subargs[0]
-		skillDir := filepath.Join(regDir, name)
-		info, err := os.Stat(skillDir)
+		toolDir := filepath.Join(regDir, name)
+		info, err := os.Stat(toolDir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Fprintf(os.Stderr, "Skill '%s' not found in registry\n", name)
+				fmt.Fprintf(os.Stderr, "Tool '%s' not found in registry\n", name)
 				os.Exit(1)
 			}
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 		if !info.IsDir() {
-			fmt.Fprintf(os.Stderr, "Error: '%s' is not a valid skill\n", name)
+			fmt.Fprintf(os.Stderr, "Error: '%s' is not a valid tool\n", name)
 			os.Exit(1)
 		}
 
-		hasManifest := false
-		hasDockerfile := false
-		entries, _ := os.ReadDir(skillDir)
-		for _, e := range entries {
-			if strings.HasSuffix(e.Name(), ".cpl.json") {
-				hasManifest = true
+		manifestPath := filepath.Join(toolDir, name+".cpl.json")
+		fmt.Printf("Tool: %s\n", name)
+		fmt.Printf("  Path: %s\n", toolDir)
+		if data, err := os.ReadFile(manifestPath); err == nil {
+			var m CPLManifest
+			if json.Unmarshal(data, &m) == nil {
+				fmt.Printf("  Version: %s\n", m.Version)
+				fmt.Printf("  Description: %s\n", m.Description)
+				fmt.Printf("  Author: %s\n", m.Author)
+				fmt.Printf("  Entrypoint: %s\n", m.Image.Entrypoint)
+				fmt.Printf("  Inputs:\n")
+				for _, inp := range m.Inputs {
+					req := ""
+					if inp.Required {
+						req = " (required)"
+					}
+					fmt.Printf("    - %s (%s)%s: %s\n", inp.Name, inp.Type, req, inp.Description)
+				}
 			}
-			if e.Name() == "Dockerfile" {
-				hasDockerfile = true
-			}
-		}
-
-		fmt.Printf("Skill: %s\n", name)
-		fmt.Printf("  Path: %s\n", skillDir)
-		fmt.Printf("  Manifest: %v\n", hasManifest)
-		fmt.Printf("  Dockerfile: %v\n", hasDockerfile)
-
-		// Check if image is built
-		dockerHost := os.Getenv("DOCKER_HOST")
-		if dockerHost == "" {
-			home, _ := os.UserHomeDir()
-			sock := filepath.Join(home, ".docker", "run", "docker.sock")
-			if _, err := os.Stat(sock); err == nil {
-				dockerHost = "unix://" + sock
-			}
-		}
-		imgCmd := exec.Command("docker", "images", "--format", "{{.Repository}}", name)
-		if dockerHost != "" {
-			imgCmd.Env = append(os.Environ(), "DOCKER_HOST="+dockerHost)
-		}
-		output, _ := imgCmd.Output()
-		imageTag := strings.TrimSpace(string(output))
-		if imageTag != "" {
-			fmt.Printf("  Image: %s\n", imageTag)
-		} else {
-			fmt.Printf("  Image: (not built)\n")
 		}
 
 	case "remove":
@@ -248,8 +434,8 @@ func cmdRegistry(args []string) {
 			os.Exit(1)
 		}
 		name := subargs[0]
-		skillDir := filepath.Join(regDir, name)
-		if err := os.RemoveAll(skillDir); err != nil {
+		toolDir := filepath.Join(regDir, name)
+		if err := os.RemoveAll(toolDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Error removing '%s': %v\n", name, err)
 			os.Exit(1)
 		}

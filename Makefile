@@ -26,7 +26,7 @@ all: proto validate build
 
 # --- Build ---
 
-build: $(BINARY_VALIDATE)
+build: $(BINARY_UNICLI) $(BINARY_VALIDATE)
 	@echo "Build complete."
 
 $(BINARY_UNICLI): $(shell find cmd/unicli/ pkg/ -name '*.go' 2>/dev/null)
