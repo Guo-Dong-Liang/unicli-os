@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -153,10 +155,18 @@ func cmdRunLocal(args []string) {
 
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: tool '%s' not found in registry.\n", toolName)
-		fmt.Fprintf(os.Stderr, "  Looked in: %s\n", manifestPath)
-		fmt.Fprintf(os.Stderr, "  Install it first: unicli registry install <path-to-tool-dir>\n")
-		os.Exit(1)
+		// Tool not found locally — try remote registry
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "🔍 Tool '%s' not found locally, searching remote...\n", toolName)
+		}
+		if remoteInstall(toolName) {
+			data, err = os.ReadFile(manifestPath)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: tool '%s' not found in local or remote registry.\n", toolName)
+			fmt.Fprintf(os.Stderr, "  Search: unicli registry search %s\n", toolName)
+			os.Exit(1)
+		}
 	}
 
 	var manifest CPLManifest
@@ -472,6 +482,23 @@ func cmdRegistry(args []string) {
 		}
 		fmt.Printf("Removed '%s'\n", name)
 
+	case "remote":
+		remoteURL := getRemoteURL()
+		if len(subargs) >= 2 && subargs[0] == "set" {
+			setRemoteURL(subargs[1])
+			fmt.Printf("Remote registry set to: %s\n", subargs[1])
+		} else {
+			fmt.Printf("Remote registry: %s\n", remoteURL)
+			fmt.Println("  Change: unicli registry remote set <url>")
+		}
+
+	case "search":
+		query := ""
+		if len(subargs) > 0 {
+			query = strings.Join(subargs, " ")
+		}
+		searchRemote(query)
+
 	default:
 		fmt.Printf("Unknown registry subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -654,4 +681,164 @@ echo "Hello from %s! input=$1"
 	fmt.Printf("    cd %s\n", toolDir)
 	fmt.Printf("    unicli registry install .\n")
 	fmt.Printf("    unicli run %s --input test\n\n", toolName)
-}
+	}
+
+	// --- Remote Registry ---
+
+	type RegistryIndex struct {
+	RegistryVersion string        `json:"registry_version"`
+	BaseURL         string        `json:"base_url"`
+	Tools           []RegistryTool `json:"tools"`
+	}
+
+	type RegistryTool struct {
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Description string `json:"description"`
+	Path        string `json:"path"`
+	}
+
+	func getUniclircPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".unicli", "config.json")
+	}
+
+	func getRemoteURL() string {
+	defaultURL := "http://192.168.1.87:3000/admin/unicli-os/raw/main/registry/index.json"
+	cfgPath := getUniclircPath()
+	if data, err := os.ReadFile(cfgPath); err == nil {
+	var cfg map[string]string
+	if json.Unmarshal(data, &cfg) == nil {
+		if url, ok := cfg["remote_registry"]; ok && url != "" {
+			return url
+		}
+	}
+	}
+	return defaultURL
+	}
+
+	func setRemoteURL(url string) {
+	cfgPath := getUniclircPath()
+	os.MkdirAll(filepath.Dir(cfgPath), 0755)
+	cfg := map[string]string{"remote_registry": url}
+	data, _ := json.MarshalIndent(cfg, "", "  ")
+	os.WriteFile(cfgPath, data, 0644)
+	}
+
+	func fetchRemoteIndex() (*RegistryIndex, error) {
+	url := getRemoteURL()
+	resp, err := http.Get(url)
+	if err != nil {
+	return nil, fmt.Errorf("cannot connect to remote registry: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+	return nil, fmt.Errorf("remote registry returned HTTP %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var idx RegistryIndex
+	if err := json.Unmarshal(body, &idx); err != nil {
+	return nil, fmt.Errorf("invalid registry index: %v", err)
+	}
+	return &idx, nil
+	}
+
+	func searchRemote(query string) {
+	idx, err := fetchRemoteIndex()
+	if err != nil {
+	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	os.Exit(1)
+	}
+
+	fmt.Printf("Remote registry: %s\n", idx.BaseURL)
+	fmt.Printf("Available tools (%d):\n\n", len(idx.Tools))
+
+	query = strings.ToLower(query)
+	found := 0
+	for _, t := range idx.Tools {
+	if query != "" {
+		nameMatch := strings.Contains(strings.ToLower(t.Name), query)
+		descMatch := strings.Contains(strings.ToLower(t.Description), query)
+		if !nameMatch && !descMatch {
+			continue
+		}
+	}
+	fmt.Printf("  📦 %s  v%s\n", t.Name, t.Version)
+	fmt.Printf("     %s\n", t.Description)
+	fmt.Printf("     Install: unicli registry install %s\n", t.Name)
+	fmt.Println()
+	found++
+	}
+	if query != "" {
+	fmt.Printf("Found %d tool(s) matching '%s'\n", found, query)
+	}
+	}
+
+	func remoteInstall(toolName string) bool {
+	idx, err := fetchRemoteIndex()
+	if err != nil {
+	fmt.Fprintf(os.Stderr, "  Remote unavailable: %v\n", err)
+	return false
+	}
+
+	// Find tool in index
+	var toolInfo *RegistryTool
+	for _, t := range idx.Tools {
+	if t.Name == toolName {
+		toolInfo = &t
+		break
+	}
+	}
+	if toolInfo == nil {
+	return false
+	}
+
+	// Download tool files from remote
+	baseURL := strings.TrimSuffix(idx.BaseURL, "/index.json")
+	regDir := getRegistryDir()
+	toolDir := filepath.Join(regDir, toolName)
+
+	// Fetch file list from the remote tool directory
+	// We know the structure: <path>/<name>.cpl.json + entrypoint file(s)
+	fmt.Fprintf(os.Stderr, "  📥 Downloading '%s' from remote...\n", toolName)
+	os.MkdirAll(toolDir, 0755)
+
+	filesToFetch := []string{
+	toolInfo.Path + "/" + toolName + ".cpl.json",
+	}
+
+	// Try to fetch common entrypoint files
+	for _, entry := range []string{".sh", ".py", ".bat"} {
+	filesToFetch = append(filesToFetch, toolInfo.Path+"/main"+entry)
+	filesToFetch = append(filesToFetch, toolInfo.Path+"/run"+entry)
+	}
+
+	downloaded := 0
+	for _, filePath := range filesToFetch {
+	fileURL := baseURL + "/" + filePath
+	resp, err := http.Get(fileURL)
+	if err != nil || resp.StatusCode != 200 {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		continue
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	localName := filepath.Base(filePath)
+	os.WriteFile(filepath.Join(toolDir, localName), body, 0755)
+	downloaded++
+	}
+
+	if downloaded == 0 {
+	// Fallback: try listing files from the tool's Gitea tree API
+	fmt.Fprintf(os.Stderr, "  ⚠ Could not download tool files.\n")
+	os.RemoveAll(toolDir)
+	return false
+	}
+
+	fmt.Fprintf(os.Stderr, "  ✅ Installed '%s' (%d files)\n", toolName, downloaded)
+	fmt.Fprintf(os.Stderr, "  ▶  Run: unicli run %s\n", toolName)
+	return true
+	}
