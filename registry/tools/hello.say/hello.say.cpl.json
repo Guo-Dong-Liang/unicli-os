@@ -1,0 +1,65 @@
+{
+  "cpl_version": "1.0.0",
+  "name": "hello.say",
+  "version": "1.0.0",
+  "description": "A test CLI that greets with a customizable name — for pipe testing and validation",
+  "author": "UniCLI Team",
+  "inputs": [
+    {
+      "name": "name",
+      "type": "STRING",
+      "required": false,
+      "default": "World",
+      "description": "Name to greet",
+      "flag": "--name"
+    },
+    {
+      "name": "greeting",
+      "type": "STRING",
+      "required": false,
+      "default": "Hello",
+      "description": "Greeting word",
+      "flag": "--greeting"
+    },
+    {
+      "name": "repeat",
+      "type": "INT",
+      "required": false,
+      "default": 1,
+      "description": "Number of times to repeat the greeting",
+      "flag": "--repeat"
+    },
+    {
+      "name": "pipe_input",
+      "type": "STREAM",
+      "required": false,
+      "description": "Input from upstream pipe (structured message stream)",
+      "position": 0
+    }
+  ],
+  "outputs": [
+    {
+      "name": "greeting_text",
+      "type": "TEXT",
+      "description": "The generated greeting text",
+      "capture_stdout": true
+    }
+  ],
+  "resources": {
+    "cpu": 0.1,
+    "memory": 16,
+    "network": false,
+    "timeout": 10,
+    "disk": 16
+  },
+  "image": {
+    "ref": "ghcr.io/unixcli/hello.say:1.0.0",
+    "entrypoint": "/app/say.sh",
+    "workdir": "/workspace",
+    "user": "nobody:nogroup"
+  },
+  "signature": {
+    "algorithm": "SHA256",
+    "digest": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1"
+  }
+}

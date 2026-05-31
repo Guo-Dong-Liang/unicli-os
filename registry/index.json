@@ -1,0 +1,25 @@
+{
+  "registry_version": "1.0",
+  "description": "UniCLI 官方远程注册表",
+  "base_url": "http://192.168.1.87:3000/admin/unicli-registry/raw/main",
+  "tools": [
+    {
+      "name": "hello.say",
+      "version": "1.0.0",
+      "description": "测试用打招呼工具",
+      "path": "tools/hello.say"
+    },
+    {
+      "name": "comfyui-gen",
+      "version": "1.0.0",
+      "description": "用 ComfyUI + SDXL 生成图片",
+      "path": "tools/comfyui-gen"
+    },
+    {
+      "name": "llm",
+      "version": "1.0.0",
+      "description": "调用本地 llama.cpp 模型聊天",
+      "path": "tools/llm"
+    }
+  ]
+}

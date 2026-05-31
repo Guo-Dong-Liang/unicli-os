@@ -1,0 +1,62 @@
+{
+  "cpl_version": "1.0.0",
+  "name": "llm",
+  "version": "1.0.0",
+  "description": "调用本地 llama.cpp 模型聊天。需要先启动 llama-server（双击 start-llama.bat）。",
+  "author": "UniCLI Team",
+  "inputs": [
+    {
+      "name": "prompt",
+      "type": "STRING",
+      "required": true,
+      "description": "输入提示词",
+      "flag": "--prompt"
+    },
+    {
+      "name": "system",
+      "type": "STRING",
+      "required": false,
+      "default": "你是一个乐于助人的助手。",
+      "description": "系统提示词",
+      "flag": "--system"
+    },
+    {
+      "name": "temp",
+      "type": "FLOAT",
+      "required": false,
+      "default": 0.7,
+      "description": "温度（0-2，越高越随机）",
+      "flag": "--temp"
+    },
+    {
+      "name": "max-tokens",
+      "type": "INT",
+      "required": false,
+      "default": 1024,
+      "description": "最大生成长度",
+      "flag": "--max-tokens"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "response",
+      "type": "TEXT",
+      "description": "模型回复文本",
+      "capture_stdout": true
+    }
+  ],
+  "resources": {
+    "cpu": 4,
+    "memory": 4096,
+    "network": false,
+    "gpu": true,
+    "timeout": 120,
+    "disk": 256
+  },
+  "image": {
+    "ref": "ghcr.io/unixcli/llm-chat:1.0.0",
+    "entrypoint": "llm-chat.py",
+    "workdir": "/workspace",
+    "user": "nobody:nogroup"
+  }
+}
