@@ -144,17 +144,17 @@ func cmdRunLocal(args []string) {
 	// Determine entrypoint path
 	toolDir := filepath.Join(regDir, toolName)
 	entrypoint := manifest.Image.Entrypoint
-	// If entrypoint is an absolute path (container path), make it relative to tool dir
-	if strings.HasPrefix(entrypoint, "/") {
-		// Try: <toolDir>/<basename>
-		baseName := filepath.Base(entrypoint)
-		localPath := filepath.Join(toolDir, baseName)
-		if _, err := os.Stat(localPath); err == nil {
-			entrypoint = localPath
-		} else {
-			// Try: <toolDir>/<entrypoint without leading />
-			rel := strings.TrimPrefix(entrypoint, "/")
-			entrypoint = filepath.Join(toolDir, rel)
+
+	// Resolve entrypoint path relative to tool directory
+	if !filepath.IsAbs(entrypoint) {
+		entrypoint = filepath.Join(toolDir, entrypoint)
+	} else if strings.HasPrefix(entrypoint, "/") {
+		// Container-style path, try to find locally
+		rel := strings.TrimPrefix(entrypoint, "/")
+		entrypoint = filepath.Join(toolDir, rel)
+		// If not found, try just the basename
+		if _, err := os.Stat(entrypoint); os.IsNotExist(err) {
+			entrypoint = filepath.Join(toolDir, filepath.Base(entrypoint))
 		}
 	}
 
@@ -167,10 +167,20 @@ func cmdRunLocal(args []string) {
 	// Parse tool args against manifest inputs
 	cmdArgs := buildCommandArgs(manifest, toolArgs)
 
-	// Determine how to run: if it's a shell script, run with bash
+	// Determine how to run: shell scripts with bash, python with python
 	var cmd *exec.Cmd
 	if strings.HasSuffix(entrypoint, ".sh") {
 		cmd = exec.Command("bash", append([]string{entrypoint}, cmdArgs...)...)
+	} else if strings.HasSuffix(entrypoint, ".py") {
+		// Try Hermes venv Python first, then fallback to system python
+		pyPath := "C:\\Users\\Administrator\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\python.exe"
+		if _, err := os.Stat(pyPath); os.IsNotExist(err) {
+			pyPath = "python3"
+			if _, err2 := exec.LookPath("python3"); err2 != nil {
+				pyPath = "python"
+			}
+		}
+		cmd = exec.Command(pyPath, append([]string{entrypoint}, cmdArgs...)...)
 	} else {
 		// Make executable and run directly
 		cmd = exec.Command(entrypoint, cmdArgs...)
