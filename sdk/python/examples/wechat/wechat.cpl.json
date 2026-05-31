@@ -1,0 +1,52 @@
+{
+  "cpl_version": "1.0.0",
+  "name": "wechat",
+  "version": "1.0.0",
+  "description": "微信命令行工具 - 发消息、看消息、管理联系人",
+  "author": "UniCLI SDK",
+  "inputs": [
+    {
+      "name": "action",
+      "type": "STRING",
+      "required": true,
+      "description": "操作: send=发消息, list=联系人, history=聊天记录, stats=统计",
+      "flag": "--action"
+    },
+    {
+      "name": "to",
+      "type": "STRING",
+      "required": false,
+      "description": "接收人",
+      "flag": "--to"
+    },
+    {
+      "name": "msg",
+      "type": "STRING",
+      "required": false,
+      "description": "消息内容",
+      "flag": "--msg"
+    },
+    {
+      "name": "with",
+      "type": "STRING",
+      "required": false,
+      "description": "查看与某人的聊天记录",
+      "flag": "--with"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "type": "TEXT",
+      "description": "命令执行结果",
+      "capture_stdout": true
+    }
+  ],
+  "resources": { "cpu": 0.1, "memory": 64, "network": false, "gpu": false, "timeout": 30, "disk": 16 },
+  "image": {
+    "ref": "ghcr.io/unixcli/wechat:1.0.0",
+    "entrypoint": "wechat.py",
+    "workdir": "/workspace",
+    "user": "nobody:nogroup"
+  }
+}
