@@ -499,6 +499,22 @@ func cmdRegistry(args []string) {
 		}
 		searchRemote(query)
 
+	case "login":
+		if len(subargs) >= 2 && subargs[0] == "gitea" {
+			setGiteaToken(subargs[1])
+			fmt.Println("✅ Gitea token saved")
+		} else {
+			fmt.Println("Usage: unicli registry login gitea <token>")
+			fmt.Println("  Get a token from: http://192.168.1.87:3000/user/settings/applications")
+		}
+
+	case "publish":
+		toolDir := "."
+		if len(subargs) > 0 {
+			toolDir = subargs[0]
+		}
+		publishTool(toolDir)
+
 	default:
 		fmt.Printf("Unknown registry subcommand: %s\n", subcmd)
 		os.Exit(1)
