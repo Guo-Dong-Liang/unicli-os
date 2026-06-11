@@ -1,15 +1,14 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/unixcli/unicli-os/pkg/cpl"
+	"github.com/unixcli/unicli-os/pkg/publish"
 )
 
 // --- Gitea Config ---
@@ -21,9 +20,9 @@ func getDefaultGiteaURL() string {
 	return "http://localhost:3000"
 }
 
-// --- Gitea Token ---
+// --- Auth Token ---
 
-func getGiteaToken() string {
+func getPublishToken() string {
 	cfgPath := getUniclircPath()
 	if data, err := os.ReadFile(cfgPath); err == nil {
 		var cfg map[string]string
@@ -36,7 +35,7 @@ func getGiteaToken() string {
 	return ""
 }
 
-func setGiteaToken(token string) {
+func setPublishToken(token string) {
 	cfgPath := getUniclircPath()
 	os.MkdirAll(filepath.Dir(cfgPath), 0755)
 
@@ -50,6 +49,53 @@ func setGiteaToken(token string) {
 
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	os.WriteFile(cfgPath, data, 0644)
+}
+
+// getPublishBackend creates and configures a publish Backend from stored config.
+func getPublishBackend() (publish.Backend, error) {
+	cfgPath := getUniclircPath()
+	token := getPublishToken()
+	giteaURL := getDefaultGiteaURL()
+
+	// Read full config from file
+	backendType := "gitea"
+	owner := "admin"
+	repo := "unicli-os"
+	branch := "main"
+	basePath := "registry/tools"
+
+	if data, err := os.ReadFile(cfgPath); err == nil {
+		var cfg map[string]string
+		if json.Unmarshal(data, &cfg) == nil {
+			if bt, ok := cfg["backend"]; ok {
+				backendType = bt
+			}
+			if o, ok := cfg["owner"]; ok {
+				owner = o
+			}
+			if r, ok := cfg["repo"]; ok {
+				repo = r
+			}
+			if b, ok := cfg["branch"]; ok {
+				branch = b
+			}
+			if bp, ok := cfg["base_path"]; ok {
+				basePath = bp
+			}
+		}
+	}
+
+	pubCfg := publish.Config{
+		BackendType: backendType,
+		BaseURL:     giteaURL,
+		Token:       token,
+		Owner:       owner,
+		Repo:        repo,
+		Branch:      branch,
+		BasePath:    basePath,
+	}
+
+	return publish.New(pubCfg)
 }
 
 // --- Publish ---
@@ -87,24 +133,26 @@ func publishTool(toolDir string) {
 	fmt.Printf("   From: %s\n\n", toolDir)
 
 	// Check auth
-	token := getGiteaToken()
+	token := getPublishToken()
 	if token == "" {
-		fmt.Println("⚠  No Gitea token configured.")
+		fmt.Println("⚠  No publish token configured.")
 		fmt.Println("   Run: unicli registry login gitea <token>")
 		fmt.Println("   Get token from your self-hosted Gitea server (Settings > Applications)")
 		os.Exit(1)
 	}
 
-	giteaURL := getDefaultGiteaURL()
-	owner := "admin"
-	repo := "unicli-os"
-	branch := "main"
+	// Get publish backend
+	backend, err := getPublishBackend()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to configure publish backend: %v\n", err)
+		os.Exit(1)
+	}
 	basePath := "registry/tools"
 
 	// Collect files to upload
 	type fileToUpload struct {
 		path    string
-		content string
+		content []byte
 	}
 	var files []fileToUpload
 
@@ -112,7 +160,7 @@ func publishTool(toolDir string) {
 	manifestContent, _ := os.ReadFile(manifestPath)
 	files = append(files, fileToUpload{
 		path:    fmt.Sprintf("%s/%s/%s.cpl.json", basePath, toolName, toolName),
-		content: string(manifestContent),
+		content: manifestContent,
 	})
 
 	// Read entrypoint
@@ -121,7 +169,7 @@ func publishTool(toolDir string) {
 	if entryData, err := os.ReadFile(entryPath); err == nil {
 		files = append(files, fileToUpload{
 			path:    fmt.Sprintf("%s/%s/%s", basePath, toolName, entrypoint),
-			content: string(entryData),
+			content: entryData,
 		})
 	}
 
@@ -133,77 +181,32 @@ func publishTool(toolDir string) {
 		}
 		fn := e.Name()
 		if fn == manifest.Name+".cpl.json" || fn == entrypoint {
-			continue // already uploaded
+			continue
 		}
 		if strings.HasSuffix(fn, ".sh") || strings.HasSuffix(fn, ".py") || strings.HasSuffix(fn, ".json") {
 			data, _ := os.ReadFile(filepath.Join(toolDir, fn))
 			files = append(files, fileToUpload{
 				path:    fmt.Sprintf("%s/%s/%s", basePath, toolName, fn),
-				content: string(data),
+				content: data,
 			})
 		}
 	}
 
-	// Upload each file via Gitea API
-	apiBase := fmt.Sprintf("%s/api/v1/repos/%s/%s/contents", giteaURL, owner, repo)
+	// Upload via backend
 	successCount := 0
-
 	for _, f := range files {
-		apiURL := fmt.Sprintf("%s/%s", apiBase, f.path)
-
-		// Check if file already exists (get SHA)
-		req, _ := http.NewRequest("GET", apiURL, nil)
-		req.Header.Set("Authorization", "token "+token)
-		resp, err := http.DefaultClient.Do(req)
-		sha := ""
-		if err == nil && resp.StatusCode == 200 {
-			var result map[string]interface{}
-			json.NewDecoder(resp.Body).Decode(&result)
-			resp.Body.Close()
-			if s, ok := result["sha"].(string); ok {
-				sha = s
-			}
-		} else if resp != nil {
-			resp.Body.Close()
-		}
-
-		// Create/update file
-		payload := map[string]interface{}{
-			"content":  base64.StdEncoding.EncodeToString([]byte(f.content)),
-			"message":  fmt.Sprintf("feat(registry): publish %s - %s", toolName, f.path),
-			"branch":   branch,
-		}
-		if sha != "" {
-			payload["sha"] = sha
-		}
-
-		body, _ := json.Marshal(payload)
-		req, _ = http.NewRequest("PUT", apiURL, strings.NewReader(string(body)))
-		req.Header.Set("Authorization", "token "+token)
-		req.Header.Set("Content-Type", "application/json")
-
-		resp2, err2 := http.DefaultClient.Do(req)
-		if err2 != nil {
-			fmt.Fprintf(os.Stderr, "  ⚠ Failed to upload %s: %v\n", f.path, err2)
+		if err := backend.Upload(f.path, f.content); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ Failed to upload %s: %v\n", f.path, err)
 			continue
 		}
-		resp2.Body.Close()
-
-		if resp2.StatusCode == 200 || resp2.StatusCode == 201 {
-			fmt.Printf("  ✅ Uploaded: %s\n", f.path)
-			successCount++
-		} else {
-			fmt.Fprintf(os.Stderr, "  ⚠ Upload %s returned HTTP %d\n", f.path, resp2.StatusCode)
-		}
+		fmt.Printf("  ✅ Uploaded: %s\n", f.path)
+		successCount++
 	}
 
 	if successCount > 0 {
 		fmt.Printf("\n✅ Published '%s' (%d/%d files)\n", toolName, successCount, len(files))
-		fmt.Printf("   View: %s/%s/%s/src/branch/%s/%s/%s\n", giteaURL, owner, repo, branch, basePath, toolName)
 	} else {
 		fmt.Fprintf(os.Stderr, "\n❌ Publish failed\n")
 		os.Exit(1)
 	}
 }
-
-

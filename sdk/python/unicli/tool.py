@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from functools import wraps
+from pathlib import Path
 
 # Registry to store all decorated tools
 _REGISTRY = {}
@@ -68,7 +69,7 @@ def tool(name=None, description="", inputs=None, outputs=None, version="1.0.0"):
             }],
             "resources": {"cpu": 1, "memory": 256, "network": False, "gpu": False, "timeout": 60, "disk": 128},
             "image": {
-                "ref": f"ghcr.io/unixcli/{tool_name}:{version}",
+                "ref": f"{os.environ.get('IMAGE_REGISTRY', 'ghcr.io/unixcli')}/{tool_name}:{version}",
                 "entrypoint": f"{tool_name}.py",
                 "workdir": "/workspace",
                 "user": "nobody:nogroup"
@@ -159,6 +160,8 @@ def _py_type_to_cpl(annotation):
         bool: "BOOLEAN",
         str: "STRING",
         list: "STREAM",
+        Path: "FILE",
+        bytes: "FILE",
         "INT": "INT",
         "FLOAT": "FLOAT",
         "BOOLEAN": "BOOLEAN",
