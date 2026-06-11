@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/unixcli/unicli-os/pkg/cpl"
+	"github.com/unixcli/unicli-os/pkg/runner"
 )
 
 var version = "dev"
@@ -50,6 +51,7 @@ func printUsage() {
 
 Usage:
   unicli run <tool-name> [flags...]       Run a tool from registry (local)
+  unicli run --sandbox <tool-name>        Run in Docker sandbox (isolated)
   unicli run --image <ref> [-- <cmd>...]  Run a Docker image
   unicli init [tool-name]                 Scaffold a new tool (interactive)
   unicli registry list                    List installed tools
@@ -58,8 +60,14 @@ Usage:
   unicli registry remove <name>           Remove an installed tool
   unicli help                             Show this help
 
+Flags:
+  --sandbox       Run tool in Docker sandbox with full isolation
+  --allow-unsafe  Skip sandbox warning in local mode
+  --quiet, -q     Suppress non-essential output
+
 Examples:
   unicli run hello.say --name 果果
+  unicli run --sandbox hello.say --name 果果
   unicli init my-tool                      # Create a new tool
   unicli registry install ./my-tool/       # Install it
   unicli run --image alpine:3.20 -- echo "Hello"
@@ -93,6 +101,7 @@ func cmdRunLocal(args []string) {
 	// Check for pipe mode and security flags
 	quiet := false
 	allowUnsafe := false
+	useSandbox := false
 	var filteredArgs []string
 	for i := 0; i < len(toolArgs); i++ {
 		if toolArgs[i] == "--quiet" || toolArgs[i] == "-q" {
@@ -101,6 +110,10 @@ func cmdRunLocal(args []string) {
 		}
 		if toolArgs[i] == "--allow-unsafe" {
 			allowUnsafe = true
+			continue
+		}
+		if toolArgs[i] == "--sandbox" {
+			useSandbox = true
 			continue
 		}
 		filteredArgs = append(filteredArgs, toolArgs[i])
@@ -176,18 +189,32 @@ func cmdRunLocal(args []string) {
 		}
 	}
 
+	// Sandbox mode: run in Docker container with full isolation
+	if useSandbox && manifest.Image.Ref != "" {
+		sr := &runner.SandboxRunner{
+			Manifest: &manifest,
+		}
+		if quiet {
+			sr.PipeMode = true
+		}
+		result, err := sr.Run()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(result.ExitCode)
+		return
+	}
+
 	// Determine how to run: shell scripts with bash, python with python
 	var cmd *exec.Cmd
 	if strings.HasSuffix(entrypoint, ".sh") {
 		cmd = exec.Command("bash", append([]string{entrypoint}, cmdArgs...)...)
 	} else if strings.HasSuffix(entrypoint, ".py") {
-		// Try Hermes venv Python first, then fallback to system python
-		pyPath := "C:\\Users\\Administrator\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\python.exe"
-		if _, err := os.Stat(pyPath); os.IsNotExist(err) {
-			pyPath = "python3"
-			if _, err2 := exec.LookPath("python3"); err2 != nil {
-				pyPath = "python"
-			}
+		// Try system python, fallback
+		pyPath := "python3"
+		if _, err2 := exec.LookPath("python3"); err2 != nil {
+			pyPath = "python"
 		}
 		cmd = exec.Command(pyPath, append([]string{entrypoint}, cmdArgs...)...)
 	} else {
