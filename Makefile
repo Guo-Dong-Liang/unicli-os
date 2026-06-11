@@ -31,7 +31,7 @@ build: $(BINARY_UNICLI) $(BINARY_VALIDATE)
 
 $(BINARY_UNICLI): $(shell find cmd/unicli/ pkg/ -name '*.go' 2>/dev/null)
 	@mkdir -p $(BIN_DIR)
-	$(GO) build -o $(BINARY_UNICLI) ./cmd/unicli 2>/dev/null || true
+	$(GO) build -ldflags "-X main.version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)" -o $(BINARY_UNICLI) ./cmd/unicli 2>/dev/null || true
 
 $(BINARY_VALIDATE): $(shell find cmd/unicli-validate/ pkg/ -name '*.go')
 	@mkdir -p $(BIN_DIR)

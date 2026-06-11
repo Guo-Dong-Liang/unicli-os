@@ -1,7 +1,7 @@
 # UniCLI OS - Windows 一键安装脚本 (PowerShell)
 # 使用方法: powershell -c "irm https://get.unicli.dev/install.ps1 | iex"
 
-$REPO_URL = $env:UNICLI_REPO ? $env:UNICLI_REPO : "http://192.168.1.87:3000/admin/unicli-os"
+$REPO_URL = $env:UNICLI_REPO ? $env:UNICLI_REPO : "https://github.com/unixcli/unicli-os"
 $INSTALL_DIR = "$env:USERPROFILE\.unicli\bin"
 
 Write-Host "============================================"

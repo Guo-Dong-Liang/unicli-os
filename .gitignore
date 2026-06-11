@@ -1,24 +1,15 @@
 # Binaries
-/unicli
-/unicli-validate
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+bin/
+unicli
+unicli.exe
+unicli-validate
+unicli-validate.exe
 
-# Build output
-/bin/
-/dist/
-/out/
-
-# Test binary, built with `go test -c`
-*.test
-
-# Profiling output
-*.prof
-*.pprof
-*.trace
+# Build / Cache
+coverage.out
+coverage.html
+pkg/cpl/v1/
+benchmarks/results.txt
 
 # IDE
 .idea/
@@ -31,11 +22,17 @@
 .DS_Store
 Thumbs.db
 
-# Dependencies
+# Go
 vendor/
+go.work
+go.work.sum
 
-# Local working directories
-~/.unicli/
+# Python
+__pycache__/
+*.pyc
+*.pyo
 
-# Cache
-*.cache
+# Test / Temp
+*.test
+*.prof
+/tmp/

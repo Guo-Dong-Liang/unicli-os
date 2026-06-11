@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: curl -fsSL https://get.unicli.dev | sh
 # Or:    bash install.sh
 
-REPO_URL="${UNICLI_REPO:-http://192.168.1.87:3000/admin/unicli-os}"
+REPO_URL="${UNICLI_REPO:-https://github.com/unixcli/unicli-os}"
 BIN_DIR="${UNICLI_BIN:-/usr/local/bin}"
 
 echo "============================================"
@@ -26,7 +26,7 @@ if command -v go &>/dev/null; then
     TMP_DIR=$(mktemp -d)
     cd "$TMP_DIR"
     git clone --depth 1 "$REPO_URL" unicli-os 2>/dev/null || {
-        echo "  克隆仓库失败，请检查 Gitea 服务器是否可访问"
+        echo "  克隆仓库失败，请检查仓库地址或网络连接"
         rm -rf "$TMP_DIR"; exit 1
     }
     cd unicli-os

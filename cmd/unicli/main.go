@@ -8,55 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+
+	"github.com/unixcli/unicli-os/pkg/cpl"
 )
 
-// --- CPL Manifest types ---
-
-type CPLManifest struct {
-	CPLVersion  string      `json:"cpl_version"`
-	Name        string      `json:"name"`
-	Version     string      `json:"version"`
-	Description string      `json:"description"`
-	Author      string      `json:"author"`
-	Inputs      []CPLInput  `json:"inputs"`
-	Outputs     []CPLOutput `json:"outputs"`
-	Resources   CPLResource `json:"resources"`
-	Image       CPLImage    `json:"image"`
-}
-
-type CPLInput struct {
-	Name        string      `json:"name"`
-	Type        string      `json:"type"`
-	Required    bool        `json:"required"`
-	Default     interface{} `json:"default"`
-	Description string      `json:"description"`
-	Flag        string      `json:"flag"`
-	Position    int         `json:"position"`
-}
-
-type CPLOutput struct {
-	Name           string `json:"name"`
-	Type           string `json:"type"`
-	Description    string `json:"description"`
-	CaptureStdout  bool   `json:"capture_stdout"`
-}
-
-type CPLResource struct {
-	CPU     float64 `json:"cpu"`
-	Memory  int     `json:"memory"`
-	Network bool    `json:"network"`
-	GPU     bool    `json:"gpu"`
-	Timeout int     `json:"timeout"`
-	Disk    int     `json:"disk"`
-}
-
-type CPLImage struct {
-	Ref        string `json:"ref"`
-	Entrypoint string `json:"entrypoint"`
-	Workdir    string `json:"workdir"`
-	User       string `json:"user"`
-}
+var version = "dev"
 
 // --- Main ---
 
@@ -78,6 +36,8 @@ func main() {
 		cmdRegistry(args)
 	case "help", "--help", "-h":
 		printUsage()
+	case "version", "--version", "-v":
+		fmt.Printf("unicli version %s\n", version)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
@@ -130,12 +90,17 @@ func cmdRunLocal(args []string) {
 	toolName := args[0]
 	toolArgs := args[1:]
 
-	// Check for pipe mode
+	// Check for pipe mode and security flags
 	quiet := false
+	allowUnsafe := false
 	var filteredArgs []string
 	for i := 0; i < len(toolArgs); i++ {
 		if toolArgs[i] == "--quiet" || toolArgs[i] == "-q" {
 			quiet = true
+			continue
+		}
+		if toolArgs[i] == "--allow-unsafe" {
+			allowUnsafe = true
 			continue
 		}
 		filteredArgs = append(filteredArgs, toolArgs[i])
@@ -169,7 +134,7 @@ func cmdRunLocal(args []string) {
 		}
 	}
 
-	var manifest CPLManifest
+	var manifest cpl.CPLManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid manifest: %v\n", err)
 		os.Exit(1)
@@ -195,6 +160,21 @@ func cmdRunLocal(args []string) {
 
 	// Parse tool args against manifest inputs
 	cmdArgs := buildCommandArgs(manifest, toolArgs)
+
+	// Security warning for local (unsandboxed) mode
+	if !quiet && !allowUnsafe {
+		fmt.Fprintf(os.Stderr, "⚠  WARNING: Running in local mode — NO sandbox isolation.\n")
+		fmt.Fprintf(os.Stderr, "   The tool will run with full access to your files and network.\n")
+		if !allowUnsafe {
+			fmt.Fprintf(os.Stderr, "   Type 'yes' to continue or press Ctrl+C to abort: ")
+			var confirm string
+			fmt.Scanln(&confirm)
+			if confirm != "yes" {
+				fmt.Fprintln(os.Stderr, "Aborted.")
+				os.Exit(1)
+			}
+		}
+	}
 
 	// Determine how to run: shell scripts with bash, python with python
 	var cmd *exec.Cmd
@@ -235,7 +215,7 @@ func cmdRunLocal(args []string) {
 }
 
 // buildCommandArgs maps CLI flags to manifest input definitions
-func buildCommandArgs(manifest CPLManifest, cliArgs []string) []string {
+func buildCommandArgs(manifest cpl.CPLManifest, cliArgs []string) []string {
 	// Parse CLI args into a map
 	argMap := make(map[string]string)
 	var positional []string
@@ -305,13 +285,37 @@ func cmdRunDocker(args []string) {
 	dockerHost := os.Getenv("DOCKER_HOST")
 	if dockerHost == "" {
 		home, _ := os.UserHomeDir()
-		sock := filepath.Join(home, ".docker", "run", "docker.sock")
-		if _, err := os.Stat(sock); err == nil {
-			dockerHost = "unix://" + sock
+		var candidates []string
+
+		switch runtime.GOOS {
+		case "darwin":
+			candidates = []string{
+				filepath.Join(home, "Library", "Containers", "com.docker.docker", "Data", "docker.raw.sock"),
+				"/var/run/docker.sock",
+			}
+		case "windows":
+			candidates = []string{"//./pipe/docker_engine"}
+		default:
+			candidates = []string{
+				"/var/run/docker.sock",
+				filepath.Join(home, ".docker", "run", "docker.sock"),
+			}
+		}
+
+		for _, sock := range candidates {
+			if _, err := os.Stat(sock); err == nil {
+				dockerHost = "unix://" + sock
+				break
+			}
 		}
 	}
 
 	dockerArgs := []string{"run", "--rm", "-i"}
+	// Apply CPL sandbox security defaults
+	dockerArgs = append(dockerArgs, "--network", "none")
+	dockerArgs = append(dockerArgs, "--read-only")
+	dockerArgs = append(dockerArgs, "--cap-drop=ALL")
+	dockerArgs = append(dockerArgs, "--user", "nobody:nogroup")
 	dockerArgs = append(dockerArgs, imageRef)
 	if len(cmdArgs) > 0 {
 		dockerArgs = append(dockerArgs, cmdArgs...)
@@ -381,7 +385,7 @@ func cmdRegistry(args []string) {
 			manifestPath := filepath.Join(regDir, t, t+".cpl.json")
 			desc := ""
 			if data, err := os.ReadFile(manifestPath); err == nil {
-				var m CPLManifest
+				var m cpl.CPLManifest
 				if json.Unmarshal(data, &m) == nil {
 					desc = m.Description
 				}
@@ -452,7 +456,7 @@ func cmdRegistry(args []string) {
 		fmt.Printf("Tool: %s\n", name)
 		fmt.Printf("  Path: %s\n", toolDir)
 		if data, err := os.ReadFile(manifestPath); err == nil {
-			var m CPLManifest
+			var m cpl.CPLManifest
 			if json.Unmarshal(data, &m) == nil {
 				fmt.Printf("  Version: %s\n", m.Version)
 				fmt.Printf("  Description: %s\n", m.Description)
@@ -505,7 +509,7 @@ func cmdRegistry(args []string) {
 			fmt.Println("✅ Gitea token saved")
 		} else {
 			fmt.Println("Usage: unicli registry login gitea <token>")
-			fmt.Println("  Get a token from: http://192.168.1.87:3000/user/settings/applications")
+			fmt.Println("  Get a token from your self-hosted Gitea server (Settings > Applications)")
 		}
 
 	case "publish":
@@ -649,22 +653,22 @@ echo "Hello from %s! input=$1"
 	os.WriteFile(filepath.Join(toolDir, epFile), []byte(entryContent), 0755)
 
 	// Build manifest
-	manifest := CPLManifest{
+	manifest := cpl.CPLManifest{
 		CPLVersion:  "1.0.0",
 		Name:        toolName,
 		Version:     "1.0.0",
 		Description: desc,
 		Author:      "UniCLI User",
-		Inputs:      make([]CPLInput, 0),
-		Outputs: []CPLOutput{
+		Inputs:      make([]cpl.CPLInput, 0),
+		Outputs: []cpl.CPLOutput{
 			{Name: "output", Type: "TEXT", Description: "工具输出", CaptureStdout: true},
 		},
-		Resources: CPLResource{CPU: 1, Memory: 256, Network: false, GPU: false, Timeout: 60, Disk: 128},
-		Image:     CPLImage{Ref: fmt.Sprintf("ghcr.io/unixcli/%s:1.0.0", toolName), Entrypoint: epFile, Workdir: "/workspace", User: "nobody:nogroup"},
+		Resources: cpl.CPLResource{CPU: 1, Memory: 256, Network: false, GPU: false, Timeout: 60, Disk: 128},
+		Image:     cpl.CPLImage{Ref: fmt.Sprintf("ghcr.io/unixcli/%s:1.0.0", toolName), Entrypoint: epFile, Workdir: "/workspace", User: "nobody:nogroup"},
 	}
 
 	for _, in := range inputs {
-		inp := CPLInput{
+		inp := cpl.CPLInput{
 			Name:        in.Name,
 			Type:        in.Type,
 			Required:    in.Required,
@@ -679,7 +683,7 @@ echo "Hello from %s! input=$1"
 
 	// If no inputs defined, add a sample one
 	if len(inputs) == 0 {
-		manifest.Inputs = append(manifest.Inputs, CPLInput{
+		manifest.Inputs = append(manifest.Inputs, cpl.CPLInput{
 			Name: "input", Type: "STRING", Required: false,
 			Flag: "--input", Description: "输入参数",
 		})
@@ -720,7 +724,7 @@ echo "Hello from %s! input=$1"
 	}
 
 	func getRemoteURL() string {
-	defaultURL := "http://192.168.1.87:3000/admin/unicli-os/raw/main/registry/index.json"
+	defaultURL := "https://raw.githubusercontent.com/unixcli/unicli-os/main/registry/index.json"
 	cfgPath := getUniclircPath()
 	if data, err := os.ReadFile(cfgPath); err == nil {
 	var cfg map[string]string
@@ -820,31 +824,51 @@ echo "Hello from %s! input=$1"
 	os.MkdirAll(toolDir, 0755)
 
 	filesToFetch := []string{
-	toolInfo.Path + "/" + toolName + ".cpl.json",
-	}
-
-	// Try to fetch common entrypoint files
-	for _, entry := range []string{".sh", ".py", ".bat"} {
-	filesToFetch = append(filesToFetch, toolInfo.Path+"/main"+entry)
-	filesToFetch = append(filesToFetch, toolInfo.Path+"/run"+entry)
+		toolInfo.Path + "/" + toolName + ".cpl.json",
 	}
 
 	downloaded := 0
-	for _, filePath := range filesToFetch {
-	fileURL := baseURL + "/" + filePath
-	resp, err := http.Get(fileURL)
-	if err != nil || resp.StatusCode != 200 {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		continue
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
 
-	localName := filepath.Base(filePath)
-	os.WriteFile(filepath.Join(toolDir, localName), body, 0755)
-	downloaded++
+	// First, download the manifest
+	manifestURL := baseURL + "/" + filesToFetch[0]
+	if resp, err := http.Get(manifestURL); err == nil && resp.StatusCode == 200 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		localName := filepath.Base(filesToFetch[0])
+		os.WriteFile(filepath.Join(toolDir, localName), body, 0644)
+		downloaded++
+
+		// Parse manifest to find the real entrypoint
+		var m cpl.CPLManifest
+		if json.Unmarshal(body, &m) == nil && m.Image.Entrypoint != "" {
+			epFile := filepath.Base(m.Image.Entrypoint)
+			if epFile != "" {
+				epURL := baseURL + "/" + toolInfo.Path + "/" + epFile
+				if resp2, err2 := http.Get(epURL); err2 == nil && resp2.StatusCode == 200 {
+					epBody, _ := io.ReadAll(resp2.Body)
+					resp2.Body.Close()
+					os.WriteFile(filepath.Join(toolDir, epFile), epBody, 0755)
+					downloaded++
+				}
+			}
+		}
+	}
+
+	if downloaded == 0 {
+		// Fallback: try guessing common entrypoint names
+		for _, entry := range []string{".sh", ".py", ".bat"} {
+			for _, base := range []string{"main", "run"} {
+				filePath := toolInfo.Path + "/" + base + entry
+				fileURL := baseURL + "/" + filePath
+				if resp, err := http.Get(fileURL); err == nil && resp.StatusCode == 200 {
+					body, _ := io.ReadAll(resp.Body)
+					resp.Body.Close()
+					localName := filepath.Base(filePath)
+					os.WriteFile(filepath.Join(toolDir, localName), body, 0755)
+					downloaded++
+				}
+			}
+		}
 	}
 
 	if downloaded == 0 {

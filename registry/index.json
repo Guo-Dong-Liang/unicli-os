@@ -1,7 +1,7 @@
 {
   "registry_version": "1.0",
   "description": "UniCLI 官方远程注册表",
-  "base_url": "http://192.168.1.87:3000/admin/unicli-os/raw/main/registry",
+  "base_url": "https://raw.githubusercontent.com/unixcli/unicli-os/main/registry",
   "tools": [
     {
       "name": "hello.say",

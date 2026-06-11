@@ -1,14 +1,25 @@
-
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/unixcli/unicli-os/pkg/cpl"
 )
+
+// --- Gitea Config ---
+
+func getDefaultGiteaURL() string {
+	if url := os.Getenv("UNICLI_GITEA_URL"); url != "" {
+		return url
+	}
+	return "http://localhost:3000"
+}
 
 // --- Gitea Token ---
 
@@ -35,7 +46,7 @@ func setGiteaToken(token string) {
 		json.Unmarshal(data, &cfg)
 	}
 	cfg["gitea_token"] = token
-	cfg["gitea_url"] = "http://192.168.1.87:3000"
+	cfg["gitea_url"] = getDefaultGiteaURL()
 
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	os.WriteFile(cfgPath, data, 0644)
@@ -65,7 +76,7 @@ func publishTool(toolDir string) {
 	}
 
 	// Validate manifest JSON
-	var manifest CPLManifest
+	var manifest cpl.CPLManifest
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid manifest: %v\n", err)
 		os.Exit(1)
@@ -80,11 +91,11 @@ func publishTool(toolDir string) {
 	if token == "" {
 		fmt.Println("⚠  No Gitea token configured.")
 		fmt.Println("   Run: unicli registry login gitea <token>")
-		fmt.Println("   Get token from: http://192.168.1.87:3000/user/settings/applications")
+		fmt.Println("   Get token from your self-hosted Gitea server (Settings > Applications)")
 		os.Exit(1)
 	}
 
-	giteaURL := "http://192.168.1.87:3000"
+	giteaURL := getDefaultGiteaURL()
 	owner := "admin"
 	repo := "unicli-os"
 	branch := "main"
@@ -158,7 +169,7 @@ func publishTool(toolDir string) {
 
 		// Create/update file
 		payload := map[string]interface{}{
-			"content":  encodeBase64(f.content),
+			"content":  base64.StdEncoding.EncodeToString([]byte(f.content)),
 			"message":  fmt.Sprintf("feat(registry): publish %s - %s", toolName, f.path),
 			"branch":   branch,
 		}
@@ -195,31 +206,4 @@ func publishTool(toolDir string) {
 	}
 }
 
-// Simple base64 encoding without importing "encoding/base64"
-func encodeBase64(data string) string {
-	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-	result := ""
-	for i := 0; i < len(data); i += 3 {
-		b0 := int(data[i])
-		b1, b2 := 0, 0
-		if i+1 < len(data) {
-			b1 = int(data[i+1])
-		}
-		if i+2 < len(data) {
-			b2 = int(data[i+2])
-		}
-		result += string(chars[b0>>2])
-		result += string(chars[((b0&3)<<4)|(b1>>4)])
-		if i+1 < len(data) {
-			result += string(chars[((b1&15)<<2)|(b2>>6)])
-		} else {
-			result += "="
-		}
-		if i+2 < len(data) {
-			result += string(chars[b2&63])
-		} else {
-			result += "="
-		}
-	}
-	return result
-}
+
