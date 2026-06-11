@@ -15,7 +15,8 @@ SKIP = {
     "bin/unicli-linux-amd64", "bin/unicli-darwin-amd64", "bin/unicli-darwin-arm64",
     "__pycache__", ".gitattributes",
 }
-BINARY_EXTS = {".exe", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff2", ".ttf"}
+BINARY_EXTS = {".exe", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff2", ".ttf", ".zip", ".tar.gz", ".gguf"}
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
 def collect_files():
     files = []
@@ -28,6 +29,12 @@ def collect_files():
         if p.name in (".gitkeep", ".DS_Store", "Thumbs.db"):
             continue
         if "__pycache__" in rel:
+            continue
+        if p.stat().st_size > MAX_FILE_SIZE:
+            continue
+        # Check for binary extensions
+        ext = os.path.splitext(p.name)[1].lower()
+        if ext in BINARY_EXTS:
             continue
         files.append((rel, p))
     files.sort(key=lambda x: x[0])
@@ -54,7 +61,7 @@ def create_file(api_url, rel_path, content_b64):
         "-H", "Content-Type: application/json",
         "--data-binary", "@-",
     ]
-    proc = subprocess.run(cmd, input=body, capture_output=True, timeout=30)
+    proc = subprocess.run(cmd, input=body, capture_output=True, timeout=60)
     result = json.loads(proc.stdout) if proc.stdout else {}
     status = "OK" if proc.returncode == 0 and result.get("content") else "FAIL"
     return status, result.get("content", {}).get("sha", "")
