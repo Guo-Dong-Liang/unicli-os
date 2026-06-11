@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/unixcli/unicli-os/pkg/cpl"
@@ -45,8 +46,8 @@ func ParsePipeline(expr string) *Pipeline {
 	return p
 }
 
-// Run executes the pipeline: each stage's stdout is piped as NDJSON frames
-// to the next stage's stdin. Final stage writes to os.Stdout.
+// Run executes the pipeline: each stage's raw stdout is piped as text
+// to the next stage's stdin. The final stage writes to os.Stdout.
 func (p *Pipeline) Run() error {
 	if len(p.Stages) == 0 {
 		return fmt.Errorf("pipeline: no stages defined")
@@ -54,56 +55,22 @@ func (p *Pipeline) Run() error {
 	if len(p.Stages) == 1 {
 		return fmt.Errorf("pipeline: single stage — use 'unicli run' instead")
 	}
-
-	for i, stage := range p.Stages {
-		// The last stage outputs directly to stdout
-		isLast := i == len(p.Stages)-1
-
-		// Run the tool and pipe its output
-		// For the first stage, stdin comes from os.Stdin
-		// For later stages, stdin comes from the previous stage's pipe
-		if i == 0 {
-			// TODO: when we have multi-stage chaining, create pipes between
-			// each pair. For now, run first stage with encoder output to buffer.
-		}
-		_ = stage
-		_ = isLast
-	}
-
-	// Simpler approach: run each stage sequentially.
-	// Stage output is captured as NDJSON, decoded, and passed to next stage.
 	return p.runSequential()
 }
 
-// runSequential runs each stage one at a time, piping text through.
+// runSequential runs each stage one at a time, piping stdout to stdin.
 func (p *Pipeline) runSequential() error {
 	var prevStdout io.Reader
 
 	for i, stage := range p.Stages {
 		isLast := i == len(p.Stages)-1
 		toolName := stage.Args[0]
-		toolArgs := stage.Args[1:] // TODO: resolve manifest and build actual args
+		stageArgs := stage.Args[1:]
 
-		cmdName := toolName
-		var cmdArgs []string
+		// Resolve command and args for this stage
+		cmdName, cmdArgs := resolveCommand(toolName, stageArgs)
 
-		switch {
-		case strings.HasSuffix(toolName, ".sh"):
-			cmdName = "bash"
-			cmdArgs = []string{toolName}
-		case strings.HasSuffix(toolName, ".py"):
-			cmdName = "python3"
-			if _, err := exec.LookPath("python3"); err != nil {
-				cmdName = "python"
-			}
-			cmdArgs = []string{toolName}
-		default:
-			// Check if it's a registered tool — resolve via manifest
-			// For now, run as-is
-			cmdArgs = toolArgs
-		}
-
-		cmd := exec.Command(cmdName, append(cmdArgs, splitArgs(toolArgs)...)...)
+		cmd := exec.Command(cmdName, cmdArgs...)
 
 		if i == 0 {
 			cmd.Stdin = os.Stdin
@@ -112,33 +79,50 @@ func (p *Pipeline) runSequential() error {
 		}
 
 		if isLast {
-			// Last stage: output directly to stdout
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 		} else {
-			// Middle stage: capture output to pipe to next stage
+			// Capture output to pipe to next stage as raw text
 			var buf bytes.Buffer
-			encoder := NewEncoder(&buf)
-			// tee stdout to the encoder
-			// For now, just capture raw stdout
 			cmd.Stdout = &buf
 			cmd.Stderr = os.Stderr
 			prevStdout = &buf
-			_ = encoder
 		}
 
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("pipeline stage %d (%s): %w", i+1, toolName, err)
+		}
+
+		// If this stage is not the last, prep the encoder for NDJSON framing
+		// for the next stage (future: structured pipe protocol)
+		if !isLast {
+			// For MVP: pass raw stdout directly (already in buffer)
+			// Upgrade to NDJSON framing later via Encoder
 		}
 	}
 
 	return nil
 }
 
-// splitArgs splits a string into arguments, respecting quoted strings.
-func splitArgs(args []string) []string {
-	if len(args) <= 1 {
-		return nil
+// resolveCommand determines the OS command to run for a tool name.
+func resolveCommand(toolName string, args []string) (string, []string) {
+	// If it's a file path (.sh / .py), use the appropriate interpreter
+	switch {
+	case strings.HasSuffix(toolName, ".sh"):
+		return "bash", append([]string{toolName}, args...)
+	case strings.HasSuffix(toolName, ".py"):
+		py := "python3"
+		if _, err := exec.LookPath("python3"); err != nil {
+			py = "python"
+		}
+		return py, append([]string{toolName}, args...)
+	default:
+		// Check if it's a registered tool — resolve via registry manifest
+		// For now, try as an absolute path or PATH lookup
+		if filepath.IsAbs(toolName) || strings.Contains(toolName, "/") || strings.Contains(toolName, "\\") {
+			return toolName, args
+		}
+		// It's a tool name, not a file path — pass as command with args
+		return toolName, args
 	}
-	return args[1:]
 }

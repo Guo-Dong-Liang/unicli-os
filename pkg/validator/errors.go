@@ -83,10 +83,21 @@ func (vr *ValidationResult) WarningCount() int {
 	return count
 }
 
+// InfoCount returns the number of informational findings.
+func (vr *ValidationResult) InfoCount() int {
+	count := 0
+	for _, e := range vr.Errors {
+		if e.Severity == SeverityInfo {
+			count++
+		}
+	}
+	return count
+}
+
 // Summary returns a human-readable summary of the validation result.
 func (vr *ValidationResult) Summary() string {
 	if vr.Valid {
-		return fmt.Sprintf("PASS (%d warnings, %d info)", vr.WarningCount(), vr.WarningCount())
+		return fmt.Sprintf("PASS (%d warnings, %d info)", vr.WarningCount(), vr.InfoCount())
 	}
 	return fmt.Sprintf("FAIL (%d errors, %d warnings)", vr.ErrorCount(), vr.WarningCount())
 }

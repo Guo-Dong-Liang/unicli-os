@@ -57,6 +57,10 @@ Usage:
   unicli registry install <dir>           Install a tool from directory
   unicli registry inspect <name>          Inspect an installed tool
   unicli registry remove <name>           Remove an installed tool
+  unicli registry search <query>          Search remote registry
+  unicli registry remote <url>            Set remote registry URL
+  unicli registry login <backend> <token> Authenticate for publishing
+  unicli registry publish [dir]           Publish a tool
   unicli help                             Show this help
 
 Examples:
@@ -166,15 +170,13 @@ func cmdRunLocal(args []string) {
 	if !quiet && !allowUnsafe {
 		fmt.Fprintf(os.Stderr, "⚠  WARNING: Running in local mode — NO sandbox isolation.\n")
 		fmt.Fprintf(os.Stderr, "   The tool will run with full access to your files and network.\n")
-		if !allowUnsafe {
-			fmt.Fprintf(os.Stderr, "   Type 'yes' to continue or press Ctrl+C to abort: ")
-			localScanner := bufio.NewScanner(os.Stdin)
-			localScanner.Scan()
-			confirm := localScanner.Text()
-			if confirm != "yes" {
-				fmt.Fprintln(os.Stderr, "Aborted.")
-				os.Exit(1)
-			}
+		fmt.Fprintf(os.Stderr, "   Type 'yes' to continue or press Ctrl+C to abort: ")
+		localScanner := bufio.NewScanner(os.Stdin)
+		localScanner.Scan()
+		confirm := localScanner.Text()
+		if confirm != "yes" {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			os.Exit(1)
 		}
 	}
 
