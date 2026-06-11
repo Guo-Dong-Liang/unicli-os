@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/unixcli/unicli-os/pkg/cpl"
+	"github.com/unixcli/unicli-os/pkg/pipe"
 	"github.com/unixcli/unicli-os/pkg/runner"
 )
 
@@ -52,6 +53,7 @@ func printUsage() {
 Usage:
   unicli run <tool-name> [flags...]       Run a tool from registry (local)
   unicli run --sandbox <tool-name>        Run in Docker sandbox (isolated)
+  unicli run "A | B" [flags...]           Chain tools (pipe mode)
   unicli run --image <ref> [-- <cmd>...]  Run a Docker image
   unicli init [tool-name]                 Scaffold a new tool (interactive)
   unicli registry list                    List installed tools
@@ -80,6 +82,23 @@ func cmdRun(args []string) {
 	// If first arg is --image, use Docker mode (original behavior)
 	if len(args) > 0 && args[0] == "--image" {
 		cmdRunDocker(args)
+		return
+	}
+
+	// Pipe mode: if the first arg contains "|", parse as pipeline
+	if len(args) > 0 && strings.Contains(args[0], "|") {
+		// Join all args and parse pipeline
+		expr := strings.Join(args, " ")
+		p := pipe.ParsePipeline(expr)
+		if len(p.Stages) < 2 {
+			fmt.Fprintln(os.Stderr, "Error: pipeline requires at least 2 stages (tool1 | tool2)")
+			fmt.Fprintln(os.Stderr, "  Example: unicli run \"tool1 --flag | tool2\"")
+			os.Exit(1)
+		}
+		if err := p.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Pipeline error: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
