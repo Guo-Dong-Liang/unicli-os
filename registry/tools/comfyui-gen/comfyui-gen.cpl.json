@@ -1,0 +1,70 @@
+{
+  "cpl_version": "1.0.0",
+  "name": "comfyui-gen",
+  "version": "1.0.0",
+  "description": "使用 ComfyUI + SDXL 生成图片。需要 ComfyUI 已在本地运行。",
+  "author": "UniCLI Team",
+  "inputs": [
+    {
+      "name": "prompt",
+      "type": "STRING",
+      "required": true,
+      "description": "图片描述词（正向提示词）",
+      "flag": "--prompt"
+    },
+    {
+      "name": "width",
+      "type": "INT",
+      "required": false,
+      "default": 1024,
+      "description": "图片宽度",
+      "flag": "--width"
+    },
+    {
+      "name": "height",
+      "type": "INT",
+      "required": false,
+      "default": 1024,
+      "description": "图片高度",
+      "flag": "--height"
+    },
+    {
+      "name": "steps",
+      "type": "INT",
+      "required": false,
+      "default": 20,
+      "description": "采样步数",
+      "flag": "--steps"
+    },
+    {
+      "name": "model",
+      "type": "STRING",
+      "required": false,
+      "default": "sd_xl_base_1.0.safetensors",
+      "description": "模型名称",
+      "flag": "--model"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "image",
+      "type": "FILE",
+      "description": "生成的图片路径",
+      "capture_stdout": true
+    }
+  ],
+  "resources": {
+    "cpu": 4,
+    "memory": 8192,
+    "network": false,
+    "gpu": true,
+    "timeout": 300,
+    "disk": 1024
+  },
+  "image": {
+    "ref": "ghcr.io/Guo-Dong-Liang/comfyui-gen:1.0.0",
+    "entrypoint": "generate.py",
+    "workdir": "/workspace",
+    "user": "nobody:nogroup"
+  }
+}

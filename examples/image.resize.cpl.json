@@ -1,0 +1,76 @@
+{
+  "cpl_version": "1.0.0",
+  "name": "image.resize",
+  "version": "1.0.0",
+  "description": "Resize an image to specified dimensions using ImageMagick",
+  "author": "UniCLI Team",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "FILE",
+      "required": true,
+      "description": "Input image file path",
+      "mime_type": "image/*",
+      "position": 1
+    },
+    {
+      "name": "width",
+      "type": "INT",
+      "required": false,
+      "default": 800,
+      "description": "Target width in pixels",
+      "flag": "--width"
+    },
+    {
+      "name": "height",
+      "type": "INT",
+      "required": false,
+      "default": 0,
+      "description": "Target height in pixels (0 = auto aspect ratio)",
+      "flag": "--height"
+    },
+    {
+      "name": "quality",
+      "type": "INT",
+      "required": false,
+      "default": 85,
+      "description": "Output JPEG quality (1-100)",
+      "flag": "--quality"
+    },
+    {
+      "name": "format",
+      "type": "ENUM",
+      "required": false,
+      "default": "jpeg",
+      "description": "Output image format",
+      "flag": "--format",
+      "enum_values": ["jpeg", "png", "webp", "avif"]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "type": "FILE",
+      "description": "Resized image file",
+      "mime_type": "image/*"
+    }
+  ],
+  "resources": {
+    "cpu": 0.5,
+    "memory": 256,
+    "network": false,
+    "gpu": false,
+    "timeout": 60,
+    "disk": 512
+  },
+  "image": {
+    "ref": "ghcr.io/Guo-Dong-Liang/image.resize:1.0.0",
+    "entrypoint": "/app/resize.sh",
+    "workdir": "/workspace",
+    "user": "nobody:nogroup"
+  },
+  "signature": {
+    "algorithm": "SHA256",
+    "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

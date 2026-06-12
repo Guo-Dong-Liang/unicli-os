@@ -1,0 +1,31 @@
+{
+  "cpl_version": "1.0.0",
+  "name": "img-info",
+  "version": "1.0.0",
+  "description": "查询图片基本信息（宽高、格式、大小）",
+  "author": "UniCLI SDK",
+  "inputs": [
+    {
+      "name": "path",
+      "type": "STRING",
+      "required": true,
+      "description": "图片路径",
+      "flag": "--path"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "type": "TEXT",
+      "description": "图片信息文本",
+      "capture_stdout": true
+    }
+  ],
+  "resources": { "cpu": 1, "memory": 128, "network": false, "gpu": false, "timeout": 30, "disk": 64 },
+  "image": {
+    "ref": "ghcr.io/Guo-Dong-Liang/img-info:1.0.0",
+    "entrypoint": "img-info.py",
+    "workdir": "/workspace",
+    "user": "nobody:nogroup"
+  }
+}

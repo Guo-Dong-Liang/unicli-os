@@ -1,0 +1,27 @@
+# Binaries
+/bin/
+/unicli
+unicli.exe
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Build artifacts
+/coverage.out
+/coverage.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Go workspace
+go.work
+go.work.sum
+
+# Temp
+/tmp/

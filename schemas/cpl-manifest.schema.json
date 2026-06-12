@@ -1,0 +1,319 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/Guo-Dong-Liang/unicli-os/main/schemas/cpl-manifest-v1.json",
+  "title": "CPL Manifest",
+  "description": "Schema for CPL (Command Pipeline Language) CLI manifest files v1.0.0",
+  "type": "object",
+  "required": ["cpl_version", "name", "version", "inputs", "outputs", "image"],
+  "properties": {
+    "cpl_version": {
+      "type": "string",
+      "description": "CPL protocol version (MAJOR.MINOR.PATCH)",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "default": "1.0.0"
+    },
+    "name": {
+      "type": "string",
+      "description": "Command name, dot-separated namespacing (e.g. 'image.resize')",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$",
+      "examples": ["image.resize", "image.grayscale", "text.sentiment"]
+    },
+    "version": {
+      "type": "string",
+      "description": "CLI tool version (semver)",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9]+)?$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this CLI does"
+    },
+    "author": {
+      "type": "string",
+      "description": "Author or maintainer name"
+    },
+    "inputs": {
+      "type": "array",
+      "description": "Declared input parameters",
+      "minItems": 0,
+      "items": { "$ref": "#/definitions/Input" }
+    },
+    "outputs": {
+      "type": "array",
+      "description": "Declared output artifacts",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/Output" }
+    },
+    "resources": {
+      "$ref": "#/definitions/ResourceRequirements"
+    },
+    "image": {
+      "$ref": "#/definitions/ImageSpec"
+    },
+    "signature": {
+      "$ref": "#/definitions/Signature"
+    }
+  },
+  "definitions": {
+    "Input": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Input parameter name (lower camelCase)",
+          "pattern": "^[a-z][a-zA-Z0-9_]*$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["FILE", "STRING", "INT", "FLOAT", "BOOLEAN", "ENUM", "STREAM"],
+          "description": "Data type of this input"
+        },
+        "required": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this input is required"
+        },
+        "default": {
+          "description": "Default value. Must match the type declared in 'type'. FILE defaults must be string paths, INT defaults must be integers, FLOAT defaults must be numbers, BOOLEAN defaults must be booleans, ENUM defaults must be in enum_values.",
+          "oneOf": [
+            { "type": "string",  "description": "For FILE, STRING, ENUM types" },
+            { "type": "integer", "description": "For INT type" },
+            { "type": "number",  "description": "For FLOAT type" },
+            { "type": "boolean", "description": "For BOOLEAN type" }
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of this input"
+        },
+        "flag": {
+          "type": "string",
+          "pattern": "^--[a-z][a-zA-Z0-9-]*$",
+          "description": "CLI flag, e.g. '--width'. Auto-inferred from name if omitted."
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Positional argument index (0 = named argument; >0 = positional arg at this position)"
+        },
+        "enum_values": {
+          "type": "array",
+          "description": "Allowed values when type=ENUM",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "mime_type": {
+          "type": "string",
+          "description": "Expected MIME type pattern when type=FILE (e.g. 'image/*')"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "ENUM" } } },
+          "then": { "required": ["enum_values"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "ENUM" } }, "required": ["default"] },
+          "then": {
+            "properties": {
+              "default": { "type": "string" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "INT" } }, "required": ["default"] },
+          "then": {
+            "properties": {
+              "default": { "type": "integer" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "FLOAT" } }, "required": ["default"] },
+          "then": {
+            "properties": {
+              "default": { "type": "number" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "BOOLEAN" } }, "required": ["default"] },
+          "then": {
+            "properties": {
+              "default": { "type": "boolean" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": { "enum": ["FILE", "STRING"] }
+            },
+            "required": ["default"]
+          },
+          "then": {
+            "properties": {
+              "default": { "type": "string" }
+            }
+          }
+        }
+      ]
+    },
+    "Output": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-zA-Z0-9_]*$",
+          "description": "Output name (lower camelCase)"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["FILE", "TEXT", "STREAM", "STRUCT"],
+          "description": "Output type"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description"
+        },
+        "mime_type": {
+          "type": "string",
+          "description": "MIME type of output (e.g. 'image/jpeg', 'text/plain')"
+        },
+        "capture_stdout": {
+          "type": "boolean",
+          "default": false,
+          "description": "True if output is captured from stdout instead of a file"
+        }
+      }
+    },
+    "ResourceRequirements": {
+      "type": "object",
+      "properties": {
+        "cpu": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 64,
+          "default": 1.0,
+          "description": "CPU cores (can be fractional)"
+        },
+        "memory": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 65536,
+          "default": 128,
+          "description": "Memory limit in MB"
+        },
+        "network": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether network access is required"
+        },
+        "gpu": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether GPU access is required"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 30,
+          "description": "Execution timeout in seconds"
+        },
+        "disk": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 65536,
+          "default": 256,
+          "description": "Temporary disk space in MB"
+        }
+      }
+    },
+    "ImageSpec": {
+      "type": "object",
+      "required": ["ref", "entrypoint"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+$",
+          "description": "OCI container image reference (registry/repo:tag)"
+        },
+        "entrypoint": {
+          "type": "string",
+          "description": "Container entrypoint (absolute path inside container)"
+        },
+        "workdir": {
+          "type": "string",
+          "default": "/workspace",
+          "description": "Working directory inside container"
+        },
+        "user": {
+          "type": "string",
+          "default": "nobody:nogroup",
+          "description": "User to run as (uid:gid or user:group)"
+        },
+        "env": {
+          "type": "object",
+          "description": "Environment variables (key-value pairs)",
+          "additionalProperties": { "type": "string" },
+          "propertyNames": {
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          }
+        },
+        "mounts": {
+          "type": "array",
+          "description": "Additional volume mounts (source must be a temporary directory path)",
+          "items": { "$ref": "#/definitions/Mount" }
+        }
+      }
+    },
+    "Mount": {
+      "type": "object",
+      "required": ["source", "target"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Host path (will be validated as a temp dir at runtime)"
+        },
+        "target": {
+          "type": "string",
+          "description": "Container path (absolute)"
+        },
+        "read_only": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the mount is read-only"
+        }
+      }
+    },
+    "Signature": {
+      "type": "object",
+      "required": ["algorithm", "digest"],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": ["SHA256", "SHA512", "GPG"],
+          "description": "Signature/hash algorithm"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]+$",
+          "description": "Hex-encoded digest or signature value"
+        },
+        "public_key": {
+          "type": "string",
+          "description": "GPG public key (required when algorithm=GPG)"
+        }
+      },
+      "if": {
+        "properties": { "algorithm": { "const": "GPG" } }
+      },
+      "then": {
+        "required": ["public_key"]
+      }
+    }
+  }
+}

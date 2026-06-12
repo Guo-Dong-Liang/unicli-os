@@ -1,0 +1,52 @@
+{
+  "cpl_version": "1.0.0",
+  "name": "tc",
+  "version": "1.0.0",
+  "description": "测试平台 CLI - 查看用例、执行测试、AI生成、质量分析",
+  "author": "UniCLI",
+  "inputs": [
+    {
+      "name": "action",
+      "type": "STRING",
+      "required": true,
+      "description": "操作: dashboard/cases/case/bugs/execute/generate/pipelines/quality/health/config",
+      "flag": "--action"
+    },
+    {
+      "name": "id",
+      "type": "STRING",
+      "required": false,
+      "description": "用例 ID（case 操作时需要）",
+      "flag": "--id"
+    },
+    {
+      "name": "search",
+      "type": "STRING",
+      "required": false,
+      "description": "搜索关键词（cases 操作时）",
+      "flag": "--search"
+    },
+    {
+      "name": "case-id",
+      "type": "STRING",
+      "required": false,
+      "description": "用例 ID（execute 操作时）",
+      "flag": "--case-id"
+    },
+    {
+      "name": "prompt",
+      "type": "STRING",
+      "required": false,
+      "description": "描述要测试的功能（generate 操作时）",
+      "flag": "--prompt"
+    }
+  ],
+  "outputs": [{"name": "output", "type": "TEXT", "description": "执行结果", "capture_stdout": true}],
+  "resources": {"cpu": 0.1, "memory": 64, "network": true, "gpu": false, "timeout": 60, "disk": 16},
+  "image": {
+    "ref": "ghcr.io/Guo-Dong-Liang/tc:1.0.0",
+    "entrypoint": "tc.py",
+    "workdir": "/workspace",
+    "user": "nobody:nogroup"
+  }
+}
