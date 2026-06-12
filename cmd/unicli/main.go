@@ -51,6 +51,8 @@ func printUsage() {
 
 Usage:
   unicli run <tool-name> [flags...]       Run a tool from registry (local)
+  unicli run --sandbox <tool-name>        Run in Docker sandbox (isolated)
+  unicli run "A | B" [flags...]           Chain tools (pipe mode)
   unicli run --image <ref> [-- <cmd>...]  Run a Docker image
   unicli init [tool-name]                 Scaffold a new tool (interactive)
   unicli registry list                    List installed tools
