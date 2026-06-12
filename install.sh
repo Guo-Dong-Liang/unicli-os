@@ -7,7 +7,7 @@ set -euo pipefail
 #   或从 Releases 下载: https://github.com/Guo-Dong-Liang/unicli-os/releases
 
 REPO_URL="${UNICLI_REPO:-https://github.com/Guo-Dong-Liang/unicli-os}"
-RELEASE_VERSION="${UNICLI_VERSION:-v0.1.0}"
+RELEASE_VERSION="${UNICLI_VERSION:-v1.0}"
 BIN_DIR="${UNICLI_BIN:-/usr/local/bin}"
 
 echo "============================================"
